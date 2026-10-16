@@ -1,0 +1,32 @@
+{
+  "name": "xmindmap",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "scripts": {
+    "dev": "vite --host 127.0.0.1",
+    "build": "vue-tsc --noEmit && vite build",
+    "build:webview": "vue-tsc --noEmit && vite build --config vite.webview.config.ts",
+    "preview": "vite preview --host 127.0.0.1",
+    "typecheck": "vue-tsc --noEmit",
+    "test": "vitest run",
+    "test:e2e": "playwright test"
+  },
+  "dependencies": {
+    "@ai-sdk/openai-compatible": "^3.0.70",
+    "ai": "^7.0.142",
+    "lucide-vue-next": "^0.468.0",
+    "mdast-util-from-markdown": "^1.3.1",
+    "simple-mind-map": "0.14.0-fix.3",
+    "vue": "^3.5.44"
+  },
+  "devDependencies": {
+    "@playwright/test": "^1.64.1",
+    "@types/node": "^24.0.0",
+    "@vitejs/plugin-vue": "^6.0.10",
+    "typescript": "~5.9.3",
+    "vite": "^8.3.4",
+    "vitest": "^5.0.5",
+    "vue-tsc": "^3.3.13"
+  }
+}

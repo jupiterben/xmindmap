@@ -1,0 +1,12 @@
+node_modules/
+dist/
+test-results/
+playwright-report/
+.env
+.env.*
+!.env.example
+*.local
+vscode-extension/dist/
+vscode-extension/webview/
+vscode-extension/*.vsix
+vscode-extension/THIRD_PARTY_NOTICES.md

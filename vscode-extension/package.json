@@ -1,0 +1,47 @@
+{
+  "name": "xmindmap",
+  "displayName": "XMindmap",
+  "description": "在 VS Code 中编辑思维导图，支持大纲、主题、连线样式和导入导出。",
+  "version": "0.1.0",
+  "publisher": "xmindmap-local",
+  "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
+  "engines": { "vscode": "^1.96.0" },
+  "categories": ["Visualization", "Other"],
+  "keywords": ["mindmap", "mind-map", "思维导图"],
+  "main": "./dist/extension.cjs",
+  "activationEvents": ["onCustomEditor:xmindmap.editor"],
+  "capabilities": { "untrustedWorkspaces": { "supported": true } },
+  "contributes": {
+    "commands": [
+      { "command": "xmindmap.new", "title": "XMindmap: 新建思维导图" },
+      { "command": "xmindmap.open", "title": "XMindmap: 用导图编辑器打开" }
+    ],
+    "customEditors": [
+      {
+        "viewType": "xmindmap.editor",
+        "displayName": "XMindmap 思维导图",
+        "selector": [{ "filenamePattern": "*.xmindmap" }, { "filenamePattern": "*.smm" }],
+        "priority": "default"
+      }
+    ],
+    "menus": {
+      "explorer/context": [
+        { "command": "xmindmap.open", "when": "resourceExtname =~ /\\.(json|smm|xmindmap)$/", "group": "navigation" }
+      ]
+    }
+  },
+  "scripts": {
+    "compile": "tsc --noEmit && node scripts/build.mjs",
+    "build": "npm run compile && npm --prefix .. run build:webview",
+    "vscode:prepublish": "npm run build",
+    "package": "vsce package --no-dependencies --allow-missing-repository --out xmindmap-0.1.0.vsix",
+    "test": "npm run compile && node scripts/test.mjs"
+  },
+  "devDependencies": {
+    "@types/node": "^24.0.0",
+    "@types/vscode": "1.96.0",
+    "@vscode/vsce": "^4.0.0",
+    "esbuild": "^0.25.0",
+    "typescript": "~5.9.3"
+  }
+}
