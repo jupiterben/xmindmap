@@ -34,6 +34,10 @@ declare module 'simple-mind-map/index.js' {
       narrow(): void
       setScale(scale: number): void
     }
+    keyCommand: {
+      addShortcut(key: string, fn: () => void): void
+      removeShortcut(key: string, fn?: () => void): void
+    }
     renderer: {
       root: EngineNode | null
       activeNodeList: EngineNode[]

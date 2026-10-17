@@ -1,9 +1,10 @@
 {
   "name": "xmindmap",
   "displayName": "XMindmap",
-  "description": "在 VS Code 中编辑思维导图，支持大纲、主题、连线样式和导入导出。",
-  "version": "0.1.0",
-  "publisher": "xmindmap-local",
+  "description": "Edit mind maps in VS Code, with an outline, themes, line styles, and import/export.",
+  "version": "0.1.1",
+  "publisher": "infloop",
+  "icon": "icon.png",
   "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
   "engines": { "vscode": "^1.96.0" },
   "categories": ["Visualization", "Other"],
@@ -20,13 +21,13 @@
       {
         "viewType": "xmindmap.editor",
         "displayName": "XMindmap 思维导图",
-        "selector": [{ "filenamePattern": "*.xmindmap" }, { "filenamePattern": "*.smm" }],
+        "selector": [{ "filenamePattern": "*.xmm" }, { "filenamePattern": "*.smm" }],
         "priority": "default"
       }
     ],
     "menus": {
       "explorer/context": [
-        { "command": "xmindmap.open", "when": "resourceExtname =~ /\\.(json|smm|xmindmap)$/", "group": "navigation" }
+        { "command": "xmindmap.open", "when": "resourceExtname =~ /\\.(json|smm|xmm)$/", "group": "navigation" }
       ]
     }
   },
@@ -34,7 +35,7 @@
     "compile": "tsc --noEmit && node scripts/build.mjs",
     "build": "npm run compile && npm --prefix .. run build:webview",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --no-dependencies --allow-missing-repository --out xmindmap-0.1.0.vsix",
+    "package": "vsce package --no-dependencies --allow-missing-repository --out xmindmap-0.1.1.vsix",
     "test": "npm run compile && node scripts/test.mjs"
   },
   "devDependencies": {

@@ -7,6 +7,7 @@
     "dev": "vite --host 127.0.0.1",
     "build": "vue-tsc --noEmit && vite build",
     "build:webview": "vue-tsc --noEmit && vite build --config vite.webview.config.ts",
+    "build:vscode": "npm --prefix vscode-extension run package",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",

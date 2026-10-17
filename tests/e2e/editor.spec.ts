@@ -119,16 +119,13 @@ test('persists content, layout and theme through refresh', async ({ page }) => {
   await page.getByLabel('文档名称').fill('我的项目')
   await page.getByLabel('文档名称').press('Enter')
   await page.getByLabel('导图布局').selectOption('logicalStructure')
-  await page.getByRole('tab', { name: '主题', exact: true }).click()
-  await page.getByRole('button', { name: '主题 青林', exact: true }).click()
+  await page.getByLabel('导图主题', { exact: true }).selectOption('forest')
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await page.reload()
   await expect(page.getByText('正在打开导图')).toBeHidden()
   await expect(page.getByLabel('文档名称')).toHaveValue('我的项目')
   await expect(page.getByLabel('导图布局')).toHaveValue('logicalStructure')
-  await page.getByRole('button', { name: '切换属性面板', exact: true }).click()
-  await page.getByRole('tab', { name: '主题', exact: true }).click()
-  await expect(page.getByRole('button', { name: '主题 青林', exact: true })).toHaveClass(/selected/)
+  await expect(page.getByLabel('导图主题', { exact: true })).toHaveValue('forest')
 })
 
 test('switches local documents without leaking data or undo history', async ({ page }) => {
@@ -287,7 +284,6 @@ test('saves inline editing when the page is reloaded', async ({ page }) => {
 
 test('connector styles change actual paths and survive theme, duplicate, import and reload', async ({ page }) => {
   await openEditor(page)
-  await page.getByRole('tab', { name: '主题', exact: true }).click()
   const style = page.getByLabel('连线样式', { exact: true })
   const paths = page.locator('.smm-line-container path')
   const geometry = () => paths.evaluateAll((items) => items.map((item) => item.getAttribute('d')).join(' '))
@@ -299,7 +295,7 @@ test('connector styles change actual paths and survive theme, duplicate, import 
   await style.selectOption('direct')
   await expect.poll(geometry).not.toBe(elbow)
   await expect.poll(geometry).not.toMatch(/[CQ]/i)
-  await page.getByRole('button', { name: '主题 青林', exact: true }).click()
+  await page.getByLabel('导图主题', { exact: true }).selectOption('forest')
   await expect(style).toHaveValue('direct')
   await expect.poll(geometry).not.toMatch(/[CQ]/i)
   await page.screenshot({ path: 'test-results/line-style-desktop.png', fullPage: true })
@@ -307,8 +303,6 @@ test('connector styles change actual paths and survive theme, duplicate, import 
   await expect(style).toHaveValue('direct')
   await page.getByRole('button', { name: '保存', exact: true }).click()
   await page.reload()
-  await page.getByRole('button', { name: '切换属性面板', exact: true }).click()
-  await page.getByRole('tab', { name: '主题', exact: true }).click()
   await expect(style).toHaveValue('direct')
   await expect.poll(geometry).not.toMatch(/[CQ]/i)
   await page.locator('.export-menu summary').click()
@@ -336,8 +330,6 @@ test('connector styles change actual paths and survive theme, duplicate, import 
 test('connector style control is usable on mobile', async ({ page }) => {
   await page.setViewportSize({ width: 390, height: 844 })
   await openEditor(page)
-  await page.getByRole('button', { name: '切换属性面板', exact: true }).click()
-  await page.getByRole('tab', { name: '主题', exact: true }).click()
   await page.getByLabel('连线样式', { exact: true }).selectOption('straight')
   await expect(page.getByLabel('连线样式', { exact: true })).toHaveValue('straight')
   expect(await page.locator('body').evaluate((element) => element.scrollWidth <= window.innerWidth)).toBe(true)

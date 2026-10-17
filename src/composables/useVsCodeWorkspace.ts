@@ -1,5 +1,5 @@
 import { computed, onBeforeUnmount, ref, watch } from 'vue'
-import { createDocument, parseDocument, serializeDocument, validateTree } from '../domain/documents'
+import { createDocument, openMindMapText, parseDocument, serializeDocument, validateTree } from '../domain/documents'
 import type { MindNode, Workspace } from '../domain/types'
 import { hostRequest, vscode } from '../platform/vscode'
 
@@ -84,7 +84,7 @@ export function useVsCodeWorkspace() {
       return
     }
     try {
-      const doc = parseDocument(JSON.parse(message.text), '导图')
+      const doc = openMindMapText(message.text, '导图')
       applying = true
       acknowledged = serializeDocument(doc)
       version = message.version

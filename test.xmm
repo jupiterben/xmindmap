@@ -1,0 +1,38 @@
+{
+  "format": "xmindmap",
+  "version": 1,
+  "title": "导图",
+  "root": {
+    "data": {
+      "uid": "1acfcacf-9ea1-496d-b48c-73b161a71e29",
+      "text": "中心主题App",
+      "expand": true,
+      "richText": false,
+      "fillColor": "#365edc",
+      "fontStyle": "italic"
+    },
+    "children": [
+      {
+        "data": {
+          "uid": "d3e0b0f1-71c8-4be5-a60e-96ee99bf1e28",
+          "text": "分支主题",
+          "expand": true,
+          "richText": false
+        },
+        "children": []
+      },
+      {
+        "data": {
+          "uid": "3fb0e160-67ff-4d18-821e-40aee923188f",
+          "text": "分支主题",
+          "expand": true,
+          "richText": false
+        },
+        "children": []
+      }
+    ]
+  },
+  "layout": "mindMap",
+  "themeId": "sea",
+  "lineStyle": "curve"
+}

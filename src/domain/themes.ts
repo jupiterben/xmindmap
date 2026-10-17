@@ -41,6 +41,12 @@ export const themes: MapTheme[] = [
   theme('forest', '青林', '#257763', '#edf8f2', '#9bcbb9'),
   theme('rose', '蔷薇', '#a9456c', '#fbedf2', '#dfadc0'),
   theme('mono', '石墨', '#3e4653', '#f0f1f3', '#afb5bf'),
+  theme('amber', '琥珀', '#9a5a12', '#fff4e6', '#e4c49a'),
+  theme('sea', '沧海', '#1a6d86', '#e7f5f8', '#9ecad6'),
+  theme('dusk', '暮紫', '#6a45a3', '#f3eefb', '#c5b4e6'),
+  theme('ember', '赤霞', '#b83d36', '#fdeceb', '#efaea8'),
+  theme('olive', '橄榄', '#55662e', '#f3f6ea', '#c4cda6'),
+  theme('night', '夜蓝', '#2a365f', '#eef1f8', '#b0b8d0'),
 ]
 
 export function getTheme(id: ThemeId): MapTheme {

@@ -1,10 +1,12 @@
 import * as vscode from 'vscode'
+import { AI_PROVIDERS } from '../../src/domain/ai'
 import { isRecord } from '../../src/domain/documents'
 import { exportBytes, newContent, parseEdit, validateContent } from './document'
 import { webviewHtml } from './webview'
 import { AiController } from './ai'
 
 const VIEW_TYPE = 'xmindmap.editor'
+const keyPages = new Set(AI_PROVIDERS.flatMap((provider) => provider.keyURL ? [provider.keyURL] : []))
 
 export class MindMapEditor implements vscode.CustomTextEditorProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -79,8 +81,12 @@ export class MindMapEditor implements vscode.CustomTextEditorProvider {
 
     subscriptions.push(panel.webview.onDidReceiveMessage((message: unknown) => {
       if (!isRecord(message)) return
+      if (message.type === 'openExternal' && typeof message.url === 'string' && keyPages.has(message.url)) {
+        void vscode.env.openExternal(vscode.Uri.parse(message.url))
+        return
+      }
       // Network requests must not block document saves or cancellation messages.
-      if (typeof message.type === 'string' && message.type.startsWith('ai.')) {
+      if (typeof message.type === 'string' && (message.type.startsWith('ai.') || message.type.startsWith('shortcuts.'))) {
         void ai.handle(message, post)
         return
       }
@@ -142,8 +148,8 @@ export class MindMapEditor implements vscode.CustomTextEditorProvider {
 async function createFile(content = newContent()): Promise<boolean> {
   const folder = vscode.workspace.workspaceFolders?.[0]?.uri
   const target = await vscode.window.showSaveDialog({
-    defaultUri: folder ? vscode.Uri.joinPath(folder, '未命名导图.xmindmap') : undefined,
-    filters: { 'XMindmap 思维导图': ['xmindmap'] },
+    defaultUri: folder ? vscode.Uri.joinPath(folder, '未命名导图.xmm') : undefined,
+    filters: { 'XMindmap 思维导图': ['xmm'] },
     saveLabel: '创建导图',
   })
   if (!target) return false
@@ -162,7 +168,7 @@ export function activate(context: vscode.ExtensionContext): void {
     vscode.commands.registerCommand('xmindmap.open', async (uri?: vscode.Uri) => {
       const target = uri ?? vscode.window.activeTextEditor?.document.uri ?? (await vscode.window.showOpenDialog({
         canSelectMany: false,
-        filters: { '思维导图': ['xmindmap', 'smm', 'json'] },
+        filters: { '思维导图': ['xmm', 'smm', 'json'] },
       }))?.[0]
       if (target) await vscode.commands.executeCommand('vscode.openWith', target, VIEW_TYPE)
     }),

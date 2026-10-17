@@ -1,11 +1,63 @@
 import { isRecord } from './documents'
+import type { MindNode } from './types'
 
 export interface AiSettings {
   baseURL: string
   model: string
 }
+export interface AiProvider {
+  id: string
+  label: string
+  baseURL: string
+  keyURL?: string
+}
+export interface AiProviderStatus extends AiProvider {
+  hasKey: boolean
+}
 export interface AiSettingsStatus extends AiSettings {
   hasKey: boolean
+  providers: AiProviderStatus[]
+}
+export interface AiCatalogModel {
+  baseURL: string
+  provider: string
+  model: string
+}
+export const AI_PROVIDERS: readonly AiProvider[] = [
+  { id: 'openai', label: 'OpenAI', baseURL: 'https://api.openai.com/v1', keyURL: 'https://platform.openai.com/api-keys' },
+  { id: 'deepseek', label: 'DeepSeek', baseURL: 'https://api.deepseek.com/v1', keyURL: 'https://platform.deepseek.com/api_keys' },
+  { id: 'qwen', label: '通义千问', baseURL: 'https://dashscope.aliyuncs.com/compatible-mode/v1', keyURL: 'https://bailian.console.aliyun.com/?tab=model#/api-key' },
+  { id: 'kimi', label: 'Kimi', baseURL: 'https://api.moonshot.cn/v1', keyURL: 'https://platform.moonshot.cn/console/api-keys' },
+  { id: 'zhipu', label: '智谱', baseURL: 'https://open.bigmodel.cn/api/paas/v4', keyURL: 'https://open.bigmodel.cn/usercenter/apikeys' },
+  { id: 'minimax', label: 'MiniMax', baseURL: 'https://api.minimax.cn/v1', keyURL: 'https://platform.minimaxi.com/user-center/basic-information/interface-key' },
+  { id: 'workbuddy', label: 'WorkBuddy', baseURL: 'https://copilot.tencent.com/v2', keyURL: 'https://copilot.tencent.com/profile/' },
+  { id: 'openrouter', label: 'OpenRouter', baseURL: 'https://openrouter.ai/api/v1', keyURL: 'https://openrouter.ai/settings/keys' },
+  { id: 'groq', label: 'Groq', baseURL: 'https://api.groq.com/openai/v1', keyURL: 'https://console.groq.com/keys' },
+  { id: 'siliconflow', label: '硅基流动', baseURL: 'https://api.siliconflow.cn/v1', keyURL: 'https://cloud.siliconflow.cn/account/ak' },
+]
+export function isWorkBuddy(baseURL: string) {
+  return baseURL === 'https://copilot.tencent.com/v2'
+}
+export function endpointLabel(baseURL: string): string {
+  return AI_PROVIDERS.find((provider) => provider.baseURL === baseURL)?.label || (() => { try { return new URL(baseURL).host } catch { return '自定义' } })()
+}
+export function presentAiStatus(value: unknown): AiSettingsStatus {
+  const record = isRecord(value) ? value : {}
+  let settings = { ...defaultAiSettings }
+  try { if (isRecord(value)) settings = validateAiSettings(value, false) } catch { /* Keep the default endpoint when stored settings are unusable. */ }
+  const keyed = new Set<string>()
+  if (Array.isArray(record.providers)) {
+    for (const item of record.providers) {
+      if (!isRecord(item) || item.hasKey !== true || typeof item.baseURL !== 'string') continue
+      try { keyed.add(validateAiSettings({ baseURL: item.baseURL, model: '' }, false).baseURL) } catch { /* Ignore provider entries that are not usable endpoints. */ }
+    }
+  }
+  const providers = [
+    ...AI_PROVIDERS.map((provider) => ({ ...provider, hasKey: keyed.has(provider.baseURL) })),
+    ...[...keyed].filter((baseURL) => !AI_PROVIDERS.some((provider) => provider.baseURL === baseURL)).map((baseURL) => ({ id: `custom:${baseURL}`, label: endpointLabel(baseURL), baseURL, hasKey: true })),
+  ]
+  const current = providers.find((provider) => provider.baseURL === settings.baseURL)
+  return { ...settings, providers, hasKey: current ? current.hasKey : record.hasKey === true }
 }
 export interface AiExpansionInput {
   topic: string
@@ -94,20 +146,88 @@ export interface AiChatMessage {
   role: 'user' | 'assistant'
   content: string
 }
+export interface AiOutlineNode {
+  uid: string
+  text: string
+  children: AiOutlineNode[]
+}
+export interface AiMapContext {
+  documentId: string
+  title: string
+  outline: AiOutlineNode
+  partial: boolean
+  fingerprint: string
+}
+export type AiMapChange =
+  | { op: 'add'; parent: string; text: string }
+  | { op: 'rename'; uid: string; text: string }
+  | { op: 'remove'; uid: string }
 export interface AiChatInput {
   topic: string
   existing: string[]
   count: number
   messages: AiChatMessage[]
+  scope?: { kind: 'map'; title: string; outline: AiOutlineNode; partial: boolean }
 }
 export interface AiChatReply {
   reply: string
   topics: string[]
+  changes: AiMapChange[]
 }
 
-export function validateChatInput(value: unknown): AiChatInput {
-  if (!isRecord(value)) throw new Error('对话参数无效')
-  const context = validateExpansionInput({ ...value, instruction: '' })
+const MAX_OUTLINE_NODES = 80
+function plainLabel(value: unknown): string {
+  if (typeof value !== 'string' || !value.trim() || value.length > 200 || /[<>\u0000-\u0008\u000b\u000c\u000e-\u001f]/.test(value)) {
+    throw new Error('节点文字需为 1–200 字的纯文本，不能包含 HTML')
+  }
+  return value.trim().replace(/\s+/g, ' ')
+}
+function mapFingerprint(root: MindNode): string {
+  const rows: string[] = []
+  const visit = (node: MindNode) => {
+    rows.push(`${node.data.uid}\t${node.data.text}`)
+    if (rows.length > 5000) throw new Error('导图过大')
+    node.children.forEach(visit)
+  }
+  visit(root)
+  return rows.join('\n')
+}
+export function buildMapOutline(root: MindNode): Pick<AiMapContext, 'outline' | 'partial' | 'fingerprint'> {
+  let count = 0
+  let partial = false
+  const visit = (node: MindNode): AiOutlineNode | null => {
+    if (count >= MAX_OUTLINE_NODES) { partial = true; return null }
+    count += 1
+    const children: AiOutlineNode[] = []
+    for (const child of node.children) {
+      const next = visit(child)
+      if (next) children.push(next)
+      else break
+    }
+    return { uid: node.data.uid, text: node.data.text.replace(/\s+/g, ' ').trim().slice(0, 80) || '未命名', children }
+  }
+  const outline = visit(root)
+  if (!outline) throw new Error('导图为空')
+  return { outline, partial, fingerprint: mapFingerprint(root) }
+}
+function validateOutline(value: unknown, budget: { n: number }, depth = 0): AiOutlineNode {
+  if (depth > 80 || !isRecord(value) || typeof value.uid !== 'string' || value.uid.length < 1 || value.uid.length > 80 || /[\u0000-\u001f]/.test(value.uid) || !Array.isArray(value.children)) {
+    throw new Error('导图结构无效')
+  }
+  budget.n += 1
+  if (budget.n > MAX_OUTLINE_NODES) throw new Error('导图内容过多')
+  return { uid: value.uid, text: plainLabel(typeof value.text === 'string' ? value.text.slice(0, 80) : value.text), children: value.children.map((child) => validateOutline(child, budget, depth + 1)) }
+}
+function outlineIndex(outline: AiOutlineNode) {
+  const nodes = new Map<string, { text: string; parent: string }>()
+  const visit = (node: AiOutlineNode, parent: string) => {
+    nodes.set(node.uid, { text: node.text, parent })
+    node.children.forEach((child) => visit(child, node.uid))
+  }
+  visit(outline, '')
+  return nodes
+}
+function chatMessages(value: Record<string, unknown>): AiChatMessage[] {
   if (!Array.isArray(value.messages) || !value.messages.length || value.messages.length > 21) throw new Error('对话最多支持 10 轮，请清空对话后继续')
   let length = 0
   const messages = value.messages.map((item, index): AiChatMessage => {
@@ -119,6 +239,21 @@ export function validateChatInput(value: unknown): AiChatInput {
     return { role, content: item.content.trim() }
   })
   if (messages.at(-1)?.role !== 'user' || length > 30000) throw new Error('对话过长或最后一条不是用户消息，请清空对话后继续')
+  return messages
+}
+export function validateChatInput(value: unknown): AiChatInput {
+  if (!isRecord(value)) throw new Error('对话参数无效')
+  const messages = chatMessages(value)
+  if (isRecord(value.scope) && value.scope.kind === 'map') {
+    if (!Number.isInteger(value.count) || Number(value.count) < 1 || Number(value.count) > 10) throw new Error('修改数量为 1–10')
+    if (typeof value.scope.title !== 'string' || !value.scope.title.trim() || value.scope.title.length > 100) throw new Error('导图标题无效')
+    const outline = validateOutline(value.scope.outline, { n: 0 })
+    return {
+      topic: outline.text, existing: [], count: Number(value.count), messages,
+      scope: { kind: 'map', title: value.scope.title.trim(), outline, partial: value.scope.partial === true },
+    }
+  }
+  const context = validateExpansionInput({ ...value, instruction: '' })
   return { topic: context.topic, existing: context.existing, count: context.count, messages }
 }
 
@@ -128,20 +263,57 @@ export function parseChatReply(text: string, input: AiChatInput): AiChatReply {
   try { value = JSON.parse(text.trim().replace(/^```(?:json)?\s*\n([\s\S]*?)\n```$/i, '$1')) } catch {
     throw new Error('AI 返回内容不是有效 JSON，请重试或更换模型')
   }
-  if (!isRecord(value) || typeof value.reply !== 'string' || !value.reply.trim() || value.reply.length > 6000 || !Array.isArray(value.topics)) {
-    throw new Error('AI 对话结果格式不正确')
-  }
+  if (!isRecord(value) || typeof value.reply !== 'string' || !value.reply.trim() || value.reply.length > 6000) throw new Error('AI 对话结果格式不正确')
+  const reply = value.reply.trim()
+  if (input.scope?.kind === 'map') return { reply, topics: [], changes: parseMapChanges(value.changes, input.scope.outline, input.count) }
+  if (!Array.isArray(value.topics)) throw new Error('AI 对话结果格式不正确')
   // An empty list means a clarification/discussion response, not an insertion.
   const candidates = value.topics.length ? uniqueTopics(value.topics, [], input.count) : []
   const existing = new Set(input.existing.map((topic) => topic.trim().toLocaleLowerCase()))
-  return { reply: value.reply.trim(), topics: candidates.filter((topic) => !existing.has(topic.toLocaleLowerCase())) }
+  return { reply, topics: candidates.filter((topic) => !existing.has(topic.toLocaleLowerCase())), changes: [] }
+}
+function parseMapChanges(value: unknown, outline: AiOutlineNode, max: number): AiMapChange[] {
+  if (!Array.isArray(value) || value.length > max) throw new Error('导图修改格式不正确')
+  const nodes = outlineIndex(outline)
+  const removed = new Set<string>()
+  const changes: AiMapChange[] = []
+  for (const item of value) {
+    if (!isRecord(item)) throw new Error('导图修改格式不正确')
+    if (item.op === 'remove') {
+      if (typeof item.uid !== 'string' || !nodes.has(item.uid)) throw new Error('修改指向了导图中不存在的节点')
+      if (item.uid === outline.uid) throw new Error('不能删除中心主题')
+      let parent = nodes.get(item.uid)?.parent
+      while (parent) { if (removed.has(parent)) break; parent = nodes.get(parent)?.parent }
+      if (parent && removed.has(parent)) continue
+      removed.add(item.uid)
+      changes.push({ op: 'remove', uid: item.uid })
+    } else if (item.op === 'rename') {
+      if (typeof item.uid !== 'string' || !nodes.has(item.uid)) throw new Error('修改指向了导图中不存在的节点')
+      changes.push({ op: 'rename', uid: item.uid, text: plainLabel(item.text) })
+    } else if (item.op === 'add') {
+      if (typeof item.parent !== 'string' || !nodes.has(item.parent)) throw new Error('修改指向了导图中不存在的节点')
+      changes.push({ op: 'add', parent: item.parent, text: plainLabel(item.text) })
+    } else throw new Error('导图修改格式不正确')
+  }
+  const ancestorRemoved = (uid: string) => {
+    let parent = nodes.get(uid)?.parent
+    while (parent) {
+      if (removed.has(parent)) return true
+      parent = nodes.get(parent)?.parent
+    }
+    return false
+  }
+  if (changes.some((change) => change.op !== 'remove' && (removed.has(change.op === 'rename' ? change.uid : change.parent) || ancestorRemoved(change.op === 'rename' ? change.uid : change.parent)))) {
+    throw new Error('不能同时删除节点并修改它')
+  }
+  return changes.filter((change) => change.op !== 'remove' || !ancestorRemoved(change.uid))
 }
 
 export function parseModels(value: unknown): string[] {
-  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > 2000) throw new Error('模型列表格式不兼容，请手动填写模型')
+  if (!isRecord(value) || !Array.isArray(value.data) || value.data.length > 2000) throw new Error('模型列表格式不兼容')
   const models = value.data.flatMap((item) =>
     isRecord(item) && typeof item.id === 'string' && item.id.trim() && item.id.length <= 150 && !/[<>\u0000-\u001f]/.test(item.id) ? [item.id.trim()] : [],
   )
-  if (!models.length) throw new Error('服务未返回可用模型，请手动填写模型')
+  if (!models.length) throw new Error('服务未返回可用模型')
   return [...new Set(models)].sort((a, b) => a.localeCompare(b))
 }

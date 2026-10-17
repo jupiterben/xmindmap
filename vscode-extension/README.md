@@ -4,16 +4,16 @@
 
 ## 安装
 
-在 VS Code 扩展视图菜单中选择 **Install from VSIX / 从 VSIX 安装**，选择本目录构建出的 `xmindmap-0.1.0.vsix`。
+在 VS Code 扩展视图菜单中选择 **Install from VSIX / 从 VSIX 安装**，选择本目录构建出的 `xmindmap-0.1.1.vsix`。
 
-此包用于本地安装，`xmindmap-local` 是开发用 publisher 标识，尚未发布到 Marketplace。
+Marketplace 发布者 ID 为 `infloop`。本地安装仍可使用本目录构建出的 VSIX。
 
 ## 使用
 
-- 命令面板运行 `XMindmap: 新建思维导图`，选择路径后创建 `.xmindmap` 文件。
-- 直接打开 `.xmindmap` 或 `.smm` 文件进入导图编辑器。
+- 命令面板运行 `XMindmap: 新建思维导图`，选择路径后创建 `.xmm` 文件。
+- 直接打开 `.xmm` 或 `.smm` 文件进入导图编辑器。
 - 已有 JSON 导图：资源管理器右键选择 `XMindmap: 用导图编辑器打开`，或打开文件后运行同名命令。插件不接管普通 `.json` 文件。
-- 在右侧主题面板调整布局、配色、连线曲线/折线/直线。
+- 在工具栏调整布局、配色、连线曲线/折线/直线。
 - 编辑产生 VS Code 未保存状态；使用工具栏保存、Ctrl/Cmd+S 或 VS Code 自动保存将修改写入文件。
 - 文件菜单的“重新打开编辑器 / Reopen Editor With”可以切回文本编辑器。
 - 导入和复制会弹出新文件保存对话框，不会替换当前文件。
@@ -22,17 +22,17 @@
 
 ### AI 配置与隐私
 
-导图 Webview 获得焦点且选中单个节点时，可用 Ctrl+Alt+A（Mac：Command+Option+A）聚焦 AI 输入框。AI 设置里可修改、禁用或恢复默认，配置保存到插件 `globalState`，不依赖密钥。输入框和弹窗内不触发，不自动发送对话；若组合键被 VS Code 或系统占用，请换一组。
+导图 Webview 获得焦点且选中单个节点时，可用 Ctrl+Alt+A（Mac：Command+Option+A）聚焦 AI 输入框。AI 设置里可修改、禁用或恢复默认，配置保存到插件 `globalState`，不依赖密钥。自动扩展、生成数量、面板展开和位置同样写入 `globalState`；对话记录不保存。输入框和弹窗内不触发，不自动发送对话；若组合键被 VS Code 或系统占用，请换一组。
 
 AI 请求由扩展宿主发出；Key 存入 VS Code `SecretStorage`，不返回给 Webview，不写入导图文件。界面只显示密钥是否已配置，并提供“忘记密钥”。地址或模型配置不会来自导入的文档；变更地址必须重新配置相应密钥。
 
-保存连接后自动获取 `/models`（15 秒超时）；失败时可手动填写模型，不删除 Key。发送范围为当前节点、已有直接子主题和本窗口对话，在发送前可查看并确认。每轮最多 10 个子主题、对话最多 10 轮，60 秒超时、不自动重试。切换节点或文件会取消旧请求、清空会话，防止跨节点应用回复。取消不保证服务商不计费，不发送工作区其他文件。
+保存连接后自动获取 `/models`（15 秒超时）；失败时不删除 Key。发送范围为当前节点、已有直接子主题和本窗口对话，在发送前可查看并确认。每轮最多 10 个子主题、对话最多 10 轮，60 秒超时、不自动重试。切换节点或文件会取消旧请求、清空会话，防止跨节点应用回复。取消不保证服务商不计费，不发送工作区其他文件。
 
 需要可信工作区、有效的模型服务和 Node.js 22+ 的扩展宿主。不满足运行时条件时会提示升级 VS Code，不影响离线编辑。完整配置和限制见根目录 README 的 AI 扩展章节。
 
 ## 文件与历史
 
-`.xmindmap` 是 JSON 文件，兼容网页版本 JSON 导出格式；不是 XMind 的 ZIP 文件格式。
+`.xmm` 是 JSON 文件，兼容网页版本 JSON 导出格式；不是 XMind 的 ZIP 文件格式。
 
 文件保存由 VS Code TextDocument / WorkspaceEdit 管理，支持 VS Code 撤销、重做、保存及自动恢复。画布工具栏撤销操作由上游节点引擎处理；VS Code 文档级撤销会重新加载画布，同时重置画布内部历史。主题与布局变化使用 VS Code 文档级历史。
 
@@ -65,7 +65,7 @@ npm run package
 vscode-extension/
   dist/extension.cjs          # TypeScript 扩展宿主 bundle
   webview/                   # 共享编辑器的离线静态资源
-  xmindmap-0.1.0.vsix         # 可安装的插件包
+  xmindmap-0.1.1.vsix         # 可安装的插件包
 ```
 
 ## 开发

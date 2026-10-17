@@ -35,7 +35,7 @@ export async function hostRequest(type: 'export' | 'create' | 'save', payload: R
 }
 
 export function hostDataRequest(
-  type: 'export' | 'create' | 'save' | 'ai.settings' | 'ai.configure' | 'ai.generate' | 'ai.chat' | 'ai.models' | 'ai.shortcut.get' | 'ai.shortcut.set',
+  type: 'export' | 'create' | 'save' | 'ai.settings' | 'ai.configure' | 'ai.generate' | 'ai.chat' | 'ai.models' | 'ai.shortcut.get' | 'ai.shortcut.set' | 'ai.panel.get' | 'ai.panel.set' | 'shortcuts.get' | 'shortcuts.set',
   payload: Record<string, unknown> = {},
   signal?: AbortSignal,
 ): Promise<unknown> {

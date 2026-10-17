@@ -1,11 +1,12 @@
 import { describe, expect, it } from 'vitest'
 import {
-  createDocument, createExample, createNode, flattenTree, loadWorkspace, parseDocument,
+  createDocument, createExample, createNode, flattenTree, loadWorkspace, openMindMapText, parseDocument,
   safeLink, saveWorkspace, serializeDocument, STORAGE_KEY, validateTree,
 } from '../../src/domain/documents'
-import { exportMarkdown, importMarkdown, readDocumentFile } from '../../src/domain/files'
-import { getDocumentTheme, getTheme } from '../../src/domain/themes'
-import { lineStyles, supportsLineStyle } from '../../src/domain/types'
+import { exportMarkdown, importFreeMind, importMarkdown, readDocumentFile } from '../../src/domain/files'
+import { validateContent } from '../../vscode-extension/src/document'
+import { getDocumentTheme, getTheme, themes } from '../../src/domain/themes'
+import { lineStyles, supportsLineStyle, themeIds } from '../../src/domain/types'
 import { isNodeIcon, normalizeIcons, replaceIcon } from '../../src/domain/icons'
 
 describe('node icons', () => {
@@ -44,6 +45,7 @@ describe('document data', () => {
     }
     expect(getDocumentTheme({ themeId: 'studio', lineStyle: 'straight' }).lineRadius).toBe(0)
     expect(getTheme('studio').config.lineStyle).toBe('curve')
+    expect(themes.map((item) => item.id)).toEqual([...themeIds])
   })
   it('migrates old documents and whitelists SMM connector styles', () => {
     const root = createNode('root')
@@ -51,6 +53,8 @@ describe('document data', () => {
     expect(parseDocument({ root, lineStyle: 'bad' }).lineStyle).toBe('curve')
     expect(parseDocument({ root, theme: { config: { lineStyle: 'direct' } } }).lineStyle).toBe('direct')
     expect(parseDocument({ root, lineStyle: 'straight', theme: { config: { lineStyle: 'direct' } } }).lineStyle).toBe('straight')
+    expect(parseDocument({ root, themeId: 'dusk' }).themeId).toBe('dusk')
+    expect(parseDocument({ root, themeId: 'custom-css' }).themeId).toBe('studio')
     expect(supportsLineStyle('mindMap')).toBe(true)
     expect(supportsLineStyle('fishbone')).toBe(false)
   })
@@ -167,5 +171,39 @@ describe('files', () => {
     const result = await readDocumentFile(new File(['{"data":{"text":"Imported"}}'], 'sample.smm'))
     expect(result.title).toBe('sample')
     expect(result.root.data.text).toBe('Imported')
+    const blank = await readDocumentFile(new File([' \n'], 'test.xmm'))
+    expect(blank.title).toBe('test')
+    expect(blank.root.data.text).toBe('中心主题')
+    expect(openMindMapText('').root.data.text).toBe('中心主题')
+    expect(openMindMapText('   ').title).toBe('未命名导图')
+    expect(validateContent('')).toBe('')
+    expect(validateContent('\n')).toBe('\n')
+    expect(() => validateContent('{')).toThrow()
+  })
+  it('imports FreeMind text, notes, links and folding', async () => {
+    const xml = `<?xml version="1.0" encoding="UTF-8"?>
+<map version="1.0.1">
+<node TEXT="Project">
+  <icon BUILTIN="button_ok"/>
+  <node TEXT="Design" FOLDED="true" LINK="https://example.com/design">
+    <richcontent TYPE="NOTE"><html><body><script>alert(1)</script><p>Keep it simple</p></body></html></richcontent>
+    <node TEXT="Mobile"/>
+  </node>
+  <node TEXT="Ship &amp; learn" LINK="javascript:alert(1)"/>
+  <node TEXT="Old"><richcontent TYPE="NODE"><html><body><p>New label</p></body></html></richcontent></node>
+</node>
+</map>`
+    const doc = await readDocumentFile(new File([xml], 'plan.mm'))
+    expect(doc.title).toBe('plan')
+    expect(doc.root.data.text).toBe('Project')
+    expect(doc.root.children.map((child) => child.data.text)).toEqual(['Design', 'Ship & learn', 'New label'])
+    expect(doc.root.children[0]?.data.expand).toBe(false)
+    expect(doc.root.children[0]?.data.note).toBe('Keep it simple')
+    expect(doc.root.children[0]?.data.hyperlink).toBe('https://example.com/design')
+    expect(doc.root.children[0]?.children[0]?.data.text).toBe('Mobile')
+    expect(doc.root.children[1]?.data.hyperlink).toBeUndefined()
+    expect(() => importFreeMind('<map></map>', 'empty')).toThrow('FreeMind')
+    await expect(readDocumentFile(new File(['<map></map>'], 'empty.mm'))).rejects.toThrow('FreeMind')
+    await expect(readDocumentFile(new File(['not xml'], 'bad.mm'))).rejects.toThrow('FreeMind')
   })
 })

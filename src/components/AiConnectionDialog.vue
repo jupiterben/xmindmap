@@ -1,164 +1,142 @@
 <script setup lang="ts">
-import { computed, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { LoaderCircle, Settings2, Trash2, X } from 'lucide-vue-next'
+import { computed, onBeforeUnmount, onMounted, ref } from 'vue'
+import { Settings2, X } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
-import { probeModels, requestModels, saveAiConnection } from '../ai/connection'
-import { validateAiSettings } from '../domain/ai'
-import type { AiSettingsStatus } from '../domain/ai'
-import { isVsCode } from '../platform/vscode'
+import ProviderIcon from './ProviderIcon.vue'
+import { probeModels, saveAiConnection, saveProviderKey } from '../ai/connection'
+import { AI_PROVIDERS, endpointLabel, validateAiSettings } from '../domain/ai'
+import type { AiCatalogModel, AiProvider, AiSettingsStatus } from '../domain/ai'
+import { isVsCode, vscode } from '../platform/vscode'
 
-const props = defineProps<{ settings: AiSettingsStatus; knownModels?: string[] }>()
+const props = defineProps<{ settings: AiSettingsStatus; knownModels?: AiCatalogModel[] }>()
 const emit = defineEmits<{
   close: []
   saved: [settings: AiSettingsStatus]
-  models: [models: string[], baseURL: string]
 }>()
 const dialog = ref<HTMLDialogElement | null>(null)
-const baseURL = ref(props.settings.baseURL)
 const model = ref(props.settings.model)
-const apiKey = ref('')
-const hasKey = ref(props.settings.hasKey)
-const savedEndpoint = ref(props.settings.baseURL)
-const models = ref<string[]>([...(props.knownModels || [])])
-const touchedEndpoint = ref(false)
+const catalog = ref<AiCatalogModel[]>([...(props.knownModels || [])])
+const providerStatus = ref(props.settings.providers?.length ? props.settings.providers : AI_PROVIDERS.map((provider) => ({ ...provider, hasKey: false })))
+const providerKeys = ref<Record<string, string>>({})
+const draftProvider = ref('')
+const draftKey = ref('')
+const draftURL = ref('')
+const pickerOpen = ref(false)
+const pickerRoot = ref<HTMLElement | null>(null)
+const providerAttempts = new Map<string, string>()
+const providerControllers = new Map<string, AbortController>()
 const busy = ref(false)
-const fetching = ref(false)
 const error = ref('')
 const status = ref('')
 let disposed = false
-let controller: AbortController | undefined
-let requestId = 0
-let timer: ReturnType<typeof setTimeout> | undefined
-let modelTimer: ReturnType<typeof setTimeout> | undefined
-let attempted = ''
-let savedModel = props.settings.model
 
-function endpoint(): string {
-  try { return validateAiSettings({ baseURL: baseURL.value, model: '' }, false).baseURL } catch { return '' }
+const addedProviders = computed(() => providerStatus.value.filter((provider) => provider.hasKey))
+const availableProviders = computed(() => providerStatus.value.filter((provider) => !provider.hasKey))
+const selectedProvider = computed(() => draftProvider.value === 'custom'
+  ? { id: 'custom', label: '自定义', baseURL: '', keyURL: '' }
+  : providerStatus.value.find((provider) => provider.id === draftProvider.value))
+const keyLink = computed(() => selectedProvider.value?.keyURL || '')
+function providerModels(baseURL: string) {
+  return catalog.value.filter((item) => item.baseURL === baseURL).map((item) => item.model)
 }
-// 地址与密钥已保存且当前填写的地址与之相符时，可以直接改写模型名称。
-const connected = computed(() => hasKey.value && !!endpoint() && endpoint() === savedEndpoint.value)
-function stopTimers() {
-  clearTimeout(timer)
-  timer = undefined
-  clearTimeout(modelTimer)
-  modelTimer = undefined
+function iconId(id: string) {
+  return id.startsWith('custom:') ? 'custom' : id
 }
-function startRequest(): number {
-  requestId++
-  controller?.abort()
-  controller = new AbortController()
-  return requestId
+function closePicker(event: PointerEvent) {
+  if (!pickerRoot.value?.contains(event.target as Node)) pickerOpen.value = false
+}
+function chooseProvider(id: string) {
+  draftProvider.value = id
+  pickerOpen.value = false
+}
+function openKeyPage(event: MouseEvent) {
+  if (!keyLink.value) return
+  event.preventDefault()
+  if (isVsCode) vscode?.postMessage({ type: 'openExternal', url: keyLink.value })
+  else window.open(keyLink.value, '_blank', 'noopener,noreferrer')
+}
+function mergeCatalog(baseURL: string, list: string[]) {
+  const provider = endpointLabel(baseURL)
+  catalog.value = [...catalog.value.filter((item) => item.baseURL !== baseURL), ...list.map((model) => ({ baseURL, provider, model }))]
+}
+async function addProvider() {
+  const key = draftKey.value.trim()
+  error.value = ''
+  if (!draftProvider.value) { error.value = '请选择服务商'; return }
+  if (!key) { error.value = '请填写 API Key'; return }
+  let provider: AiProvider | undefined
+  if (draftProvider.value === 'custom') {
+    let url = ''
+    try { url = validateAiSettings({ baseURL: draftURL.value, model: '' }, false).baseURL } catch (reason) {
+      error.value = reason instanceof Error ? reason.message : '接口地址格式不正确'
+      return
+    }
+    if (providerStatus.value.some((item) => item.baseURL === url && item.hasKey)) { error.value = '该服务商已添加'; return }
+    provider = { id: `custom:${url}`, label: endpointLabel(url), baseURL: url }
+  } else provider = availableProviders.value.find((item) => item.id === draftProvider.value)
+  if (!provider) { error.value = '请选择服务商'; return }
+  providerKeys.value = { ...providerKeys.value, [provider.id]: key }
+  await connectProvider(provider)
+  if (providerStatus.value.some((item) => item.baseURL === provider.baseURL && item.hasKey)) {
+    draftProvider.value = ''
+    draftKey.value = ''
+    draftURL.value = ''
+  }
+}
+async function connectProvider(provider: AiProvider) {
+  const key = (providerKeys.value[provider.id] || '').trim()
+  if (disposed || busy.value || !key) return
+  const signature = `${provider.baseURL}\n${key}`
+  if (providerAttempts.get(provider.id) === signature) return
+  providerAttempts.set(provider.id, signature)
+  providerControllers.get(provider.id)?.abort()
+  const probe = new AbortController()
+  providerControllers.set(provider.id, probe)
+  error.value = ''
+  status.value = `正在获取 ${provider.label} 模型…`
+  try {
+    const list = await probeModels({ baseURL: provider.baseURL, model: '' }, key, probe.signal)
+    if (disposed || providerControllers.get(provider.id) !== probe) return
+    const saved = await saveProviderKey(provider.baseURL, key)
+    if (disposed || providerControllers.get(provider.id) !== probe) return
+    providerKeys.value = { ...providerKeys.value, [provider.id]: '' }
+    providerStatus.value = saved.providers
+    mergeCatalog(provider.baseURL, list)
+    if (!model.value && list[0]) await persist('', provider.baseURL, list[0])
+    else emit('saved', saved)
+    if (disposed || providerControllers.get(provider.id) !== probe) return
+    status.value = `${provider.label} 已保存，已获取 ${list.length} 个模型`
+  } catch (reason) {
+    if (providerControllers.get(provider.id) === probe) providerAttempts.delete(provider.id)
+    if (disposed || providerControllers.get(provider.id) !== probe || (reason instanceof Error && reason.name === 'AbortError')) return
+    error.value = reason instanceof Error ? reason.message : '模型列表获取失败'
+  } finally { if (providerControllers.get(provider.id) === probe) providerControllers.delete(provider.id) }
+}
+async function forgetProvider(provider: AiProvider) {
+  busy.value = true
+  error.value = ''
+  try {
+    const saved = await saveProviderKey(provider.baseURL, '', true)
+    if (disposed) return
+    providerStatus.value = saved.providers
+    providerKeys.value = { ...providerKeys.value, [provider.id]: '' }
+    providerAttempts.delete(provider.id)
+    catalog.value = catalog.value.filter((item) => item.baseURL !== provider.baseURL)
+    emit('saved', saved)
+    status.value = `${provider.label} 密钥已清除`
+  } catch (reason) {
+    if (!disposed) error.value = reason instanceof Error ? reason.message : '密钥清除失败'
+  } finally { busy.value = false }
 }
 async function persist(key: string, target: string, selected: string) {
   const saved = await saveAiConnection({ baseURL: target, model: selected }, key)
   if (disposed) return
-  hasKey.value = saved.hasKey
-  savedEndpoint.value = saved.baseURL
-  baseURL.value = saved.baseURL
+  providerStatus.value = saved.providers
   model.value = saved.model
-  savedModel = saved.model
   emit('saved', saved)
-  emit('models', models.value, saved.baseURL)
 }
-async function saveModel(value: string) {
-  error.value = ''
-  try {
-    const saved = await saveAiConnection({ baseURL: savedEndpoint.value, model: value }, '')
-    if (disposed) return
-    savedModel = saved.model
-    model.value = saved.model
-    emit('saved', saved)
-  } catch { if (!disposed) error.value = '模型偏好保存失败，本轮仍可使用所选模型' }
-}
-// 地址和密钥都填好后自动获取模型，不再要求先点一次“保存连接并获取模型”。
-async function discover() {
-  const target = endpoint()
-  const key = apiKey.value.trim()
-  if (disposed || busy.value || !target || !key) return
-  // 只在地址被改过、或为已保存的地址换密钥时自动请求，避免打开设置就产生请求。
-  if (!touchedEndpoint.value && !(hasKey.value && target === savedEndpoint.value)) return
-  const signature = `${target}\n${key}`
-  if (signature === attempted) return
-  attempted = signature
-  const id = startRequest()
-  fetching.value = true
-  error.value = ''
-  status.value = ''
-  try {
-    const list = await probeModels({ baseURL: target, model: model.value }, key, controller!.signal)
-    if (disposed || id !== requestId) return
-    models.value = list
-    await persist(key, target, model.value || list[0]!)
-    if (disposed || id !== requestId) return
-    status.value = '连接已保存，已获取模型列表'
-  } catch (reason) {
-    if (disposed || id !== requestId || (reason instanceof Error && reason.name === 'AbortError')) return
-    models.value = []
-    error.value = reason instanceof Error ? reason.message : '模型列表获取失败，可手动填写模型'
-  } finally { if (id === requestId) fetching.value = false }
-}
-async function save(forget = false) {
-  busy.value = true
-  error.value = ''
-  status.value = ''
-  stopTimers()
-  try {
-    const settings = await saveAiConnection({ baseURL: baseURL.value, model: model.value }, apiKey.value, forget)
-    if (disposed) return
-    apiKey.value = ''
-    hasKey.value = settings.hasKey
-    savedEndpoint.value = settings.baseURL
-    baseURL.value = settings.baseURL
-    model.value = settings.model
-    savedModel = settings.model
-    if (forget) models.value = []
-    emit('saved', settings)
-    emit('models', [], settings.baseURL)
-    status.value = forget ? '密钥已清除' : '连接已保存'
-    if (forget) return
-    const id = startRequest()
-    fetching.value = true
-    try {
-      const list = await requestModels(settings, controller!.signal)
-      if (disposed || id !== requestId) return
-      models.value = list
-      if (!settings.model) await persist('', settings.baseURL, list[0]!)
-      if (disposed || id !== requestId) return
-      emit('models', list, settings.baseURL)
-      emit('close')
-    } catch (reason) {
-      if (!disposed && id === requestId && !(reason instanceof Error && reason.name === 'AbortError')) {
-        error.value = reason instanceof Error ? reason.message : '模型列表获取失败，可手动填写模型'
-      }
-    } finally { if (id === requestId) fetching.value = false }
-  } catch (reason) {
-    if (!disposed) error.value = reason instanceof Error ? reason.message : '连接保存失败'
-  } finally { busy.value = false }
-}
-function pick(item: string) {
-  clearTimeout(modelTimer)
-  modelTimer = undefined
-  model.value = item
-  if (disposed || !connected.value || item === savedModel) return
-  void saveModel(item)
-}
-watch([baseURL, apiKey], () => {
-  clearTimeout(timer)
-  timer = setTimeout(() => { timer = undefined; void discover() }, 700)
-})
-watch(baseURL, () => { if (endpoint() !== savedEndpoint.value) models.value = [] }, { flush: 'sync' })
-watch(model, () => {
-  clearTimeout(modelTimer)
-  modelTimer = setTimeout(() => {
-    modelTimer = undefined
-    const value = model.value.trim()
-    if (disposed || busy.value || fetching.value || !connected.value || value === savedModel) return
-    void saveModel(value)
-  }, 700)
-})
-onMounted(() => dialog.value?.showModal())
-onBeforeUnmount(() => { disposed = true; stopTimers(); controller?.abort() })
+onMounted(() => { dialog.value?.showModal(); document.addEventListener('pointerdown', closePicker) })
+onBeforeUnmount(() => { disposed = true; document.removeEventListener('pointerdown', closePicker); for (const probe of providerControllers.values()) probe.abort() })
 </script>
 
 <template>
@@ -167,29 +145,42 @@ onBeforeUnmount(() => { disposed = true; stopTimers(); controller?.abort() })
       <h2 id="ai-settings-title"><Settings2 :size="18" />AI 设置</h2>
       <IconButton :icon="X" label="关闭 AI 设置" @click="emit('close')" />
     </div>
-    <form @submit.prevent="save()">
-      <label class="field-label">API 基础地址<input v-model="baseURL" aria-label="AI API 基础地址" type="url" required maxlength="500" autocomplete="off" :disabled="busy" @input="touchedEndpoint = true" /></label>
-      <label class="field-label">API Key{{ isVsCode ? '（VS Code 密钥存储）' : '（仅当前会话）' }}
-        <input v-model="apiKey" aria-label="AI API Key" type="password" maxlength="4096" autocomplete="new-password" :placeholder="hasKey && baseURL === savedEndpoint ? '已配置，留空保留' : '无鉴权本地服务可留空'" :disabled="busy" />
-      </label>
-      <label class="field-label">模型（可选）<input v-model="model" aria-label="AI 模型" maxlength="150" autocomplete="off" placeholder="留空则选用列表首项" :disabled="busy" /></label>
-      <div v-if="fetching || models.length" class="ai-model-picker">
-        <p v-if="fetching" class="ai-model-hint"><LoaderCircle :size="12" class="spin" />正在获取模型…</p>
-        <template v-else>
-          <p class="ai-model-hint">已获取 {{ models.length }} 个模型，点击选用</p>
-          <div class="ai-model-list" role="group" aria-label="可选模型">
-            <button v-for="item in models" :key="item" type="button" class="ai-model-choice" :class="{ active: item === model }" :aria-pressed="item === model" :disabled="busy" @click="pick(item)">{{ item }}</button>
-          </div>
-        </template>
-      </div>
-      <div class="ai-settings-actions">
-        <button class="button primary" type="submit" :disabled="busy || fetching"><LoaderCircle v-if="busy || fetching" :size="15" class="spin" />{{ fetching ? '获取模型中…' : '保存连接并获取模型' }}</button>
-        <button class="text-button" type="button" :disabled="!hasKey || busy" @click="save(true)"><Trash2 :size="14" />忘记密钥</button>
+    <div class="ai-connection-body">
+    <form @submit.prevent="addProvider">
+      <div class="section-label">服务商<span>选择后添加</span></div>
+      <ul v-if="addedProviders.length" class="ai-provider-list">
+        <li v-for="provider in addedProviders" :key="provider.id" class="ai-provider">
+          <div class="ai-provider-head"><strong><ProviderIcon :id="iconId(provider.id)" />{{ provider.label }}</strong><span>已添加</span><button type="button" class="text-button" :disabled="busy" @click="forgetProvider(provider)">移除 {{ provider.label }}</button></div>
+          <ul v-if="providerModels(provider.baseURL).length" class="ai-provider-models" :aria-label="`${provider.label} 可用模型`"><li v-for="name in providerModels(provider.baseURL)" :key="name">{{ name }}</li></ul>
+        </li>
+      </ul>
+      <div class="ai-provider-add">
+        <div ref="pickerRoot" class="field-label ai-provider-picker">服务商
+          <button type="button" class="ai-provider-trigger" aria-label="添加服务商" aria-haspopup="listbox" :aria-expanded="pickerOpen" :disabled="busy" @click="pickerOpen = !pickerOpen">
+            <ProviderIcon v-if="selectedProvider" :id="selectedProvider.id" />
+            <span>{{ selectedProvider?.label || '选择服务商' }}</span>
+          </button>
+          <ul v-if="pickerOpen" class="ai-provider-options" role="listbox" aria-label="服务商列表">
+            <li v-for="provider in availableProviders" :key="provider.id">
+              <button type="button" role="option" :aria-selected="provider.id === draftProvider" @click="chooseProvider(provider.id)"><ProviderIcon :id="provider.id" />{{ provider.label }}</button>
+            </li>
+            <li>
+              <button type="button" role="option" :aria-selected="draftProvider === 'custom'" @click="chooseProvider('custom')"><ProviderIcon id="custom" />自定义</button>
+            </li>
+          </ul>
+        </div>
+        <label v-if="draftProvider === 'custom'" class="field-label">API 基础地址<input v-model="draftURL" aria-label="AI API 基础地址" type="url" maxlength="500" autocomplete="off" placeholder="https://api.example.com/v1" :disabled="busy" /></label>
+        <label class="field-label"><span class="ai-key-heading"><a v-if="keyLink" class="ai-key-link" :href="keyLink" target="_blank" rel="noopener noreferrer" @click.stop="openKeyPage">申请</a>API Key{{ isVsCode ? '（VS Code 密钥存储）' : '（仅当前会话）' }}</span><input v-model="draftKey" aria-label="服务商 API Key" type="password" maxlength="4096" autocomplete="new-password" placeholder="输入 API Key" :disabled="busy" /></label>
+        <button class="button" type="submit" :disabled="busy">添加</button>
       </div>
     </form>
     <slot />
     <p v-if="status" class="ai-shortcut-saved" role="status">{{ status }}</p>
     <p v-if="error" class="field-error ai-error" role="alert">{{ error }}</p>
-    <div class="dialog-actions"><button class="button" type="button" @click="emit('close')">返回对话</button></div>
+    </div>
+    <div class="dialog-actions">
+      <button class="button" type="button" :disabled="busy" @click="emit('close')">取消</button>
+      <button class="button primary" type="button" :disabled="busy" @click="emit('close')">确定</button>
+    </div>
   </dialog>
 </template>

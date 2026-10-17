@@ -1,11 +1,11 @@
-import { createDocument, isRecord, MAX_FILE_SIZE, parseDocument, serializeDocument } from '../../src/domain/documents'
+import { createDocument, isRecord, MAX_FILE_SIZE, openMindMapText, serializeDocument } from '../../src/domain/documents'
 
 export function validateContent(content: unknown): string {
   if (typeof content !== 'string' || Buffer.byteLength(content, 'utf8') > MAX_FILE_SIZE) {
     throw new Error('导图内容无效或超过 5 MB')
   }
-  // Validate without rewriting: preserve original JSON and extensions on open.
-  parseDocument(JSON.parse(content))
+  // Blank files open as a new map. Keep the original text so the file stays empty until edited.
+  if (content.trim()) openMindMapText(content)
   return content
 }
 

@@ -2,7 +2,7 @@
 import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
   ArrowDownToLine, ArrowUpFromLine, Check, ChevronDown, ChevronRight, Copy, Download,
-  FilePlus2, FileText, FolderOpen, GitBranch, ListTree, LoaderCircle, Maximize,
+  FilePlus2, FileText, FolderOpen, GitBranch, Keyboard, ListTree, LoaderCircle, Maximize,
   Minus, Moon, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
   Plus, Redo2, Save, Search, Settings2, Sparkles, Sun, Trash2, Undo2, Upload, X,
 } from 'lucide-vue-next'
@@ -11,7 +11,8 @@ import OutlineTree from './components/OutlineTree.vue'
 import NodeInspector from './components/NodeInspector.vue'
 import NodeIconPicker from './components/NodeIconPicker.vue'
 import AiChatPanel from './components/AiChatPanel.vue'
-import type { AiExpansionTarget } from './domain/ai'
+import ShortcutSettings from './components/ShortcutSettings.vue'
+import type { AiExpansionTarget, AiMapChange, AiMapContext } from './domain/ai'
 import { useWorkspace } from './composables/useWorkspace'
 import { useMindMap } from './composables/useMindMap'
 import { useUiTheme } from './composables/useUiTheme'
@@ -22,6 +23,7 @@ import { layouts, lineStyles, supportsLineStyle } from './domain/types'
 import type { Layout, NodeData, ThemeId } from './domain/types'
 import { isVsCode } from './platform/vscode'
 import { useAiShortcut } from './composables/useAiShortcut'
+import { useCommandShortcuts } from './composables/useCommandShortcuts'
 import { shortcutLabel } from './domain/shortcuts'
 
 const store = useWorkspace()
@@ -42,7 +44,6 @@ store.setCapture(map.capture)
 const { selection, ready, zoom, canUndo, canRedo } = map
 const leftOpen = ref(window.innerWidth > 900)
 const rightOpen = ref(false)
-const panel = ref<'node' | 'design'>('node')
 const query = ref('')
 const searchInput = ref<HTMLInputElement | null>(null)
 const importInput = ref<HTMLInputElement | null>(null)
@@ -55,9 +56,16 @@ const isRootSelected = computed(() => selection.value.some((node) => node.uid ==
 const searchResults = computed(() => query.value.trim() ? flattenTree(active.value.root).filter(({ node }) => node.data.text.toLowerCase().includes(query.value.trim().toLowerCase())) : [])
 const searchIndex = ref(0)
 const aiTarget = ref<AiExpansionTarget | null>(null)
+const aiMap = ref<AiMapContext | null>(null)
 const aiChatPanel = ref<InstanceType<typeof AiChatPanel> | null>(null)
+const aiPanelOpen = ref(true)
 function openAi() {
+  aiPanelOpen.value = true
   aiChatPanel.value?.focusInput()
+}
+function toggleAi() {
+  aiPanelOpen.value = !aiPanelOpen.value
+  if (aiPanelOpen.value) aiChatPanel.value?.focusInput()
 }
 function applyAi(target: AiExpansionTarget, topics: string[]) {
   if (!aiTarget.value) throw new Error('请选择目标节点')
@@ -66,15 +74,30 @@ function applyAi(target: AiExpansionTarget, topics: string[]) {
   notify(`已插入 ${topics.length} 个子主题`)
   return next
 }
+function applyAiMap(context: AiMapContext, changes: AiMapChange[]) {
+  map.applyMapChanges(context, changes)
+  if (selection.value.length === 0) aiMap.value = map.mapContext()
+  const count = changes.length
+  notify(count ? `已修改导图 ${count} 处` : '没有需要应用的修改')
+}
 function currentAiTarget() {
   if (!aiTarget.value) throw new Error('请选择目标节点')
   return map.expansionTarget(aiTarget.value)
 }
+function currentAiMap() {
+  return map.mapContext()
+}
 watch([() => active.value.id, ready, () => selection.value.map((node) => node.uid).join(',')], () => {
-  if (!ready.value || selection.value.length !== 1) { aiTarget.value = null; return }
-  try { aiTarget.value = map.expansionTarget() } catch { aiTarget.value = null }
+  if (!ready.value) { aiTarget.value = null; aiMap.value = null; return }
+  if (selection.value.length === 1) {
+    aiMap.value = null
+    try { aiTarget.value = map.expansionTarget() } catch { aiTarget.value = null }
+    return
+  }
+  aiTarget.value = null
+  aiMap.value = selection.value.length === 0 ? map.mapContext() : null
 }, { flush: 'post' })
-const aiShortcut = useAiShortcut(() => ready.value && selection.value.length === 1 && !busy.value, openAi)
+const aiShortcut = useAiShortcut(() => ready.value && selection.value.length <= 1 && !busy.value, openAi)
 const { shortcut: aiShortcutValue, loading: aiShortcutLoading, error: aiShortcutError } = aiShortcut
 
 function toggleLeft() {
@@ -111,13 +134,28 @@ function setLayout(event: Event) {
   active.value.layout = (event.target as HTMLSelectElement).value as Layout
   store.touch()
 }
-function setTheme(themeId: ThemeId) { active.value.themeId = themeId; store.touch() }
+const activeTheme = computed(() => themes.find((item) => item.id === active.value.themeId) ?? themes[0]!)
+function setTheme(event: Event) {
+  const themeId = (event.target as HTMLSelectElement).value as ThemeId
+  if (!themes.some((item) => item.id === themeId)) return
+  active.value.themeId = themeId
+  store.touch()
+}
 function setLineStyle(event: Event) {
   const style = lineStyles.find((item) => item.value === (event.target as HTMLSelectElement).value)
   if (style) { active.value.lineStyle = style.value; store.touch() }
 }
 function style(key: keyof NodeData, value: NodeData[keyof NodeData]) { map.style(key, value) }
 function save() { map.capture(); store.flush(); if (!storageError.value && !isVsCode) notify('已保存到本机') }
+function focusSearch() {
+  leftOpen.value = true
+  if (window.innerWidth <= 900) rightOpen.value = false
+  void nextTick(() => searchInput.value?.focus())
+}
+const shortcutDialog = ref<InstanceType<typeof ShortcutSettings> | null>(null)
+const commandShortcuts = useCommandShortcuts(map.engine, {
+  save, search: focusSearch, insert: map.insert, command: map.command, zoomBy: map.zoomBy, fit: map.fit,
+}, aiShortcutValue)
 function searchNext() {
   if (!searchResults.value.length) return
   const target = searchResults.value[searchIndex.value % searchResults.value.length]
@@ -177,16 +215,6 @@ async function backupRaw() {
   try { await downloadText(store.rawBackup(), 'xmindmap-local-backup.json') } catch { notify('备份失败', true) }
 }
 function onKeydown(event: KeyboardEvent) {
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') {
-    event.preventDefault()
-    save()
-  }
-  if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'f') {
-    event.preventDefault()
-    leftOpen.value = true
-    if (window.innerWidth <= 900) rightOpen.value = false
-    void nextTick(() => searchInput.value?.focus())
-  }
   if (event.key === 'Escape' && exportMenu.value) exportMenu.value.open = false
 }
 window.addEventListener('keydown', onKeydown)
@@ -209,6 +237,7 @@ onBeforeUnmount(() => {
         <span class="save-state" :class="{ failed: storageError }"><span class="status-dot"></span>{{ storageError ? '保存异常' : saved ? '所有更改已保存' : isVsCode ? '未保存' : '正在保存…' }}</span>
       </div>
       <div class="header-actions">
+        <IconButton :icon="Keyboard" label="快捷键" @click="shortcutDialog?.show()" />
         <IconButton :icon="uiTheme === 'dark' ? Sun : Moon" :label="uiTheme === 'dark' ? '切换到浅色' : '切换到深色'" @click="toggleUiTheme" />
         <IconButton :icon="Save" label="保存" @click="save" />
         <button class="button import-button" :disabled="busy" @click="importInput?.click()"><Upload :size="16" /><span>导入</span></button>
@@ -222,7 +251,7 @@ onBeforeUnmount(() => {
           </div>
         </details>
       </div>
-      <input ref="importInput" class="hidden-input" type="file" accept=".json,.smm,.xmindmap,.md,.markdown" aria-label="导入文件" @change="importFile" />
+      <input ref="importInput" class="hidden-input" type="file" accept=".json,.smm,.xmm,.mm,.md,.markdown" aria-label="导入文件" @change="importFile" />
     </header>
 
     <div class="toolbar" aria-label="导图工具栏">
@@ -239,7 +268,7 @@ onBeforeUnmount(() => {
         <IconButton class="insert-parent-button" :icon="ArrowUpFromLine" label="插入父主题" :disabled="!selection.length || isRootSelected" @click="map.insert('parent')" />
         <IconButton :icon="Trash2" label="删除节点" :disabled="!selection.length || isRootSelected" @click="map.command('REMOVE_NODE')" />
         <NodeIconPicker :nodes="selection" @choose="map.setIcon" @clear="map.clearIcons" />
-        <IconButton :icon="Sparkles" label="AI 扩展" :title="`聚焦 AI 对话 (${shortcutLabel(aiShortcutValue, aiShortcut.mac)})`" :disabled="selection.length !== 1 || !ready" @click="openAi" />
+        <IconButton :icon="Sparkles" label="AI 对话" :title="`${aiPanelOpen ? '隐藏' : '显示'} AI 对话 (${shortcutLabel(aiShortcutValue, aiShortcut.mac)})`" :active="aiPanelOpen" :disabled="!ready" @click="toggleAi" />
       </div>
       <span class="toolbar-separator desktop-tool"></span>
       <div class="toolbar-group desktop-tool">
@@ -247,7 +276,23 @@ onBeforeUnmount(() => {
         <IconButton :icon="ArrowDownToLine" label="下移节点" :disabled="!selection.length || isRootSelected" @click="map.command('DOWN_NODE')" />
       </div>
       <div class="toolbar-spacer"></div>
-      <label class="layout-select"><Network :size="16" /><select aria-label="导图布局" :value="active.layout" @change="setLayout"><option v-for="layout in layouts" :key="layout.value" :value="layout.value">{{ layout.label }}</option></select></label>
+      <div class="toolbar-group toolbar-design">
+        <label class="layout-select">
+          <span class="theme-mark" :style="{ backgroundColor: activeTheme.colors[0] }"></span>
+          <select aria-label="导图主题" :value="active.themeId" @change="setTheme">
+            <option v-for="theme in themes" :key="theme.id" :value="theme.id">{{ theme.label }}</option>
+          </select>
+        </label>
+        <span class="toolbar-separator"></span>
+        <label class="layout-select">
+          <select aria-label="连线样式" :disabled="!supportsLineStyle(active.layout)" :value="supportsLineStyle(active.layout) ? active.lineStyle : 'fixed'" @change="setLineStyle">
+            <option v-if="!supportsLineStyle(active.layout)" value="fixed">布局固定</option>
+            <option v-for="style in lineStyles" :key="style.value" :value="style.value">{{ style.label }}</option>
+          </select>
+        </label>
+        <span class="toolbar-separator"></span>
+        <label class="layout-select"><Network :size="16" /><select aria-label="导图布局" :value="active.layout" @change="setLayout"><option v-for="layout in layouts" :key="layout.value" :value="layout.value">{{ layout.label }}</option></select></label>
+      </div>
       <span class="toolbar-separator"></span>
       <IconButton :icon="rightOpen ? PanelRightClose : PanelRightOpen" label="切换属性面板" :active="rightOpen" @click="toggleRight" />
     </div>
@@ -279,32 +324,13 @@ onBeforeUnmount(() => {
           <span class="toolbar-separator"></span>
           <IconButton :icon="Maximize" label="适应画布" @click="map.fit" />
         </div>
-        <AiChatPanel ref="aiChatPanel" :target="aiTarget" :current-target="currentAiTarget" :apply="applyAi" :shortcut="aiShortcutValue" :shortcut-loading="aiShortcutLoading" :shortcut-error="aiShortcutError" :mac="aiShortcut.mac" :save-shortcut="aiShortcut.save" />
+        <AiChatPanel v-show="aiPanelOpen" ref="aiChatPanel" :visible="aiPanelOpen" :target="aiTarget" :map="aiMap" :current-target="currentAiTarget" :current-map="currentAiMap" :apply="applyAi" :apply-map="applyAiMap" :shortcut="aiShortcutValue" :shortcut-loading="aiShortcutLoading" :shortcut-error="aiShortcutError" :mac="aiShortcut.mac" :save-shortcut="aiShortcut.save" />
       </section>
 
       <aside v-if="rightOpen" class="right-panel">
-        <div class="panel-tabs" role="tablist" aria-label="属性面板">
-          <button id="node-tab" role="tab" :aria-selected="panel === 'node'" aria-controls="inspector-content" :class="{ selected: panel === 'node' }" @click="panel = 'node'"><Settings2 :size="15" />节点</button>
-          <button id="design-tab" role="tab" :aria-selected="panel === 'design'" aria-controls="inspector-content" :class="{ selected: panel === 'design' }" @click="panel = 'design'"><Network :size="15" />主题</button>
-        </div>
-        <div id="inspector-content" class="inspector-content" role="tabpanel" :aria-labelledby="panel === 'node' ? 'node-tab' : 'design-tab'">
-          <NodeInspector v-if="panel === 'node'" :nodes="selection" @style="style" @properties="map.properties" @image="addImage" @remove-image="removeImage" />
-          <template v-else>
-            <div class="inspector-section">
-              <label class="field-label">连线样式
-                <select aria-label="连线样式" :disabled="!supportsLineStyle(active.layout)" :value="supportsLineStyle(active.layout) ? active.lineStyle : 'fixed'" @change="setLineStyle">
-                  <option v-if="!supportsLineStyle(active.layout)" value="fixed">布局固定</option>
-                  <option v-for="style in lineStyles" :key="style.value" :value="style.value">{{ style.label }}</option>
-                </select>
-              </label>
-            </div>
-            <div class="inspector-section"><div class="section-label">导图主题<span>{{ themes.length }} 款</span></div><div class="theme-list">
-              <button v-for="theme in themes" :key="theme.id" class="theme-option" :class="{ selected: active.themeId === theme.id }" :aria-label="`主题 ${theme.label}`" @click="setTheme(theme.id)">
-                <span class="theme-preview"><span v-for="color in theme.colors" :key="color" :style="{ backgroundColor: color }"></span></span><span>{{ theme.label }}</span><Check v-if="active.themeId === theme.id" :size="16" />
-              </button>
-            </div></div>
-            <div class="inspector-section"><div class="section-label">结构布局</div><div class="layout-list"><button v-for="layout in layouts" :key="layout.value" :class="{ selected: active.layout === layout.value }" @click="active.layout = layout.value; store.touch()"><Network :size="16" />{{ layout.label }}<Check v-if="active.layout === layout.value" :size="14" /></button></div></div>
-          </template>
+        <div class="panel-heading"><span><Settings2 :size="16" />节点</span></div>
+        <div class="inspector-content">
+          <NodeInspector :nodes="selection" @style="style" @properties="map.properties" @image="addImage" @remove-image="removeImage" />
         </div>
         <div class="panel-bottom"><span class="status-dot"></span>{{ selection.length ? `已选择 ${selection.length} 个节点` : '未选择节点' }}</div>
       </aside>
@@ -315,6 +341,7 @@ onBeforeUnmount(() => {
     <div v-if="message" class="toast" :class="{ error: isError }" :role="isError ? 'alert' : 'status'"><component :is="isError ? X : Check" :size="17" />{{ message }}<button aria-label="关闭提示" @click="message = ''"><X :size="14" /></button></div>
     <div v-if="busy" class="busy-indicator" role="status"><LoaderCircle :size="16" class="spin" />正在处理文件…</div>
 
+    <ShortcutSettings ref="shortcutDialog" :shortcuts="commandShortcuts.shortcuts.value" :mac="aiShortcut.mac" :loading="commandShortcuts.loading.value" :load-error="commandShortcuts.error.value" :save="commandShortcuts.update" :reset="commandShortcuts.reset" />
     <dialog ref="confirmDialog" class="confirm-dialog" @click="($event.target === confirmDialog) && confirmDialog?.close()">
       <form method="dialog"><div class="dialog-heading"><h2>删除导图？</h2><IconButton :icon="X" label="取消删除" @click="confirmDialog?.close()" /></div><p>“{{ active.title }}” 将从本机移除，此操作无法撤销。</p><div class="dialog-actions"><button class="button" value="cancel">取消</button><button type="button" class="button danger" @click="deleteDocument">确认删除</button></div></form>
     </dialog>

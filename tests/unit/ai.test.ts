@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { expansionPrompt, parseAiTopics, uniqueTopics, validateAiSettings, validateExpansionInput } from '../../src/domain/ai'
+import { AI_PROVIDERS, expansionPrompt, parseAiTopics, presentAiStatus, uniqueTopics, validateAiSettings, validateExpansionInput } from '../../src/domain/ai'
 import { generateTopics } from '../../src/ai/generate'
 
 const settings = { baseURL: 'https://ai.example.test/v1', model: 'test-model' }
@@ -21,6 +21,17 @@ describe('AI boundaries', () => {
       expect(() => validateAiSettings({ ...settings, baseURL })).toThrow()
     }
     expect(() => validateAiSettings({ ...settings, model: '' })).toThrow('模型')
+    expect(new Set(AI_PROVIDERS.map((provider) => provider.id)).size).toBe(AI_PROVIDERS.length)
+    for (const provider of AI_PROVIDERS) {
+      expect(validateAiSettings({ baseURL: provider.baseURL, model: '' }, false).baseURL).toBe(provider.baseURL)
+      expect(provider.keyURL).toMatch(/^https:\/\/[^/?#\s]+/)
+    }
+    const status = presentAiStatus({ baseURL: AI_PROVIDERS[0]!.baseURL, model: 'gpt-4o', providers: [{ baseURL: AI_PROVIDERS[0]!.baseURL, hasKey: true }, { baseURL: AI_PROVIDERS[1]!.baseURL, hasKey: true }] })
+    expect(status.providers.filter((provider) => provider.hasKey).map((provider) => provider.id)).toEqual([AI_PROVIDERS[0]!.id, AI_PROVIDERS[1]!.id])
+    expect(status.hasKey).toBe(true)
+    const custom = presentAiStatus({ baseURL: 'https://ai.example.test/v1', model: 'model-a', providers: [{ baseURL: 'https://ai.example.test/v1', hasKey: true }, { baseURL: AI_PROVIDERS[0]!.baseURL, hasKey: true }] })
+    expect(custom.providers.find((provider) => provider.id === 'custom:https://ai.example.test/v1')).toMatchObject({ label: 'ai.example.test', hasKey: true })
+    expect(custom.hasKey).toBe(true)
   })
   it('limits prompt context and builds explicit data-only input', () => {
     expect(() => validateExpansionInput({ ...input, count: 11 })).toThrow()

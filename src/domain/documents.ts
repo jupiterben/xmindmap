@@ -1,4 +1,4 @@
-import { layouts, lineStyles } from './types'
+import { layouts, lineStyles, themeIds } from './types'
 import { normalizeIcons } from './icons'
 import type { MapDocument, MindNode, NodeData, OutlineEntry, ThemeId, Workspace } from './types'
 
@@ -116,13 +116,18 @@ export function validateTree(value: unknown): MindNode {
   return visit(value, 0)
 }
 
+export function openMindMapText(text: string, fallbackTitle = '未命名导图'): MapDocument {
+  if (!text.trim()) return createDocument(fallbackTitle)
+  return parseDocument(JSON.parse(text), fallbackTitle)
+}
+
 export function parseDocument(value: unknown, fallbackTitle = '导入的导图'): MapDocument {
   if (!isRecord(value)) throw new Error('文件不是有效的导图对象')
   const root = validateTree(value.root ?? value)
   const title = typeof value.title === 'string' && value.title.trim() ? value.title.trim().slice(0, 100) : fallbackTitle
   const doc = createDocument(title, root)
   if (layouts.some((layout) => layout.value === value.layout)) doc.layout = value.layout as MapDocument['layout']
-  if (['studio', 'forest', 'rose', 'mono'].includes(String(value.themeId))) doc.themeId = value.themeId as ThemeId
+  if (typeof value.themeId === 'string' && (themeIds as readonly string[]).includes(value.themeId)) doc.themeId = value.themeId as ThemeId
   const upstreamStyle = isRecord(value.theme) && isRecord(value.theme.config) ? value.theme.config.lineStyle : undefined
   const lineStyle = value.lineStyle ?? upstreamStyle
   const validStyle = lineStyles.find((style) => style.value === lineStyle)

@@ -13,8 +13,8 @@ import { hostRequest, isVsCode } from '../platform/vscode'
 import { isNodeIcon, normalizeIcons, replaceIcon } from '../domain/icons'
 import type { NodeIcon } from '../domain/icons'
 import { createNode, flattenTree, MAX_FILE_SIZE, serializeDocument, validateTree } from '../domain/documents'
-import { uniqueTopics } from '../domain/ai'
-import type { AiExpansionTarget } from '../domain/ai'
+import { buildMapOutline, uniqueTopics } from '../domain/ai'
+import type { AiExpansionTarget, AiMapChange, AiMapContext } from '../domain/ai'
 
 MindMap.usePlugin(Drag).usePlugin(Export).usePlugin(Select).usePlugin(KeyboardNavigation).usePlugin(TouchEvent)
 
@@ -187,6 +187,76 @@ export function useMindMap(
       fingerprint: JSON.stringify([node.data.text, node.children.map((child) => [child.data.uid, child.data.text])]),
     }
   }
+  function mapContext(): AiMapContext {
+    const root = validateTree(engine.value?.getData() ?? doc.value.root)
+    return { documentId: doc.value.id, title: doc.value.title.slice(0, 100), ...buildMapOutline(root) }
+  }
+  function applyMapChanges(context: AiMapContext, changes: AiMapChange[]) {
+    const map = engine.value
+    if (!map || context.documentId !== doc.value.id) throw new Error('文档已切换，请重新生成')
+    const root = validateTree(map.getData())
+    if (buildMapOutline(root).fingerprint !== context.fingerprint) throw new Error('导图已发生变化，请重新生成')
+    const located = new Map<string, { node: MindNode; parent: MindNode | null }>()
+    const walk = (node: MindNode, parent: MindNode | null) => {
+      located.set(node.data.uid, { node, parent })
+      node.children.forEach((child) => walk(child, node))
+    }
+    walk(root, null)
+    const removed = new Set(changes.filter((change) => change.op === 'remove').map((change) => change.uid))
+    const topRemoved = [...removed].filter((uid) => {
+      let parent = located.get(uid)?.parent
+      while (parent) {
+        if (removed.has(parent.data.uid)) return false
+        parent = located.get(parent.data.uid)?.parent ?? null
+      }
+      return true
+    })
+    const grouped = new Map<string, string[]>()
+    const draft = JSON.parse(JSON.stringify(root)) as MindNode
+    const draftNodes = new Map<string, MindNode>()
+    const walkDraft = (node: MindNode) => { draftNodes.set(node.data.uid, node); node.children.forEach(walkDraft) }
+    walkDraft(draft)
+    for (const uid of removed) {
+      const current = draftNodes.get(uid)
+      const parent = current && [...draftNodes.values()].find((item) => item.children.includes(current))
+      if (!current || !parent) throw new Error('要删除的节点不存在')
+      parent.children = parent.children.filter((child) => child !== current)
+    }
+    for (const change of changes) {
+      if (change.op === 'rename') {
+        const current = draftNodes.get(change.uid)
+        if (!current || removed.has(change.uid)) throw new Error('要改名的节点不存在')
+        current.data.text = change.text
+      }
+      if (change.op === 'add') {
+        const parent = draftNodes.get(change.parent)
+        if (!parent || removed.has(change.parent)) throw new Error('要新增到的节点不存在')
+        if (parent.children.some((child) => child.data.text.trim().toLocaleLowerCase() === change.text.toLocaleLowerCase())) continue
+        parent.children.push(createNode(change.text))
+        grouped.set(change.parent, [...(grouped.get(change.parent) ?? []), change.text])
+      }
+    }
+    validateTree(draft)
+    if (new TextEncoder().encode(serializeDocument({ ...doc.value, root: draft })).byteLength > MAX_FILE_SIZE) throw new Error('修改后文档超过 5 MB，请减少内容')
+    const removeNodes = topRemoved.flatMap((uid) => {
+      const engineNode = map.renderer.findNodeByUid(uid)
+      return engineNode && !engineNode.isRoot ? [engineNode] : []
+    })
+    if (removeNodes.length) map.execCommand('REMOVE_NODE', removeNodes)
+    for (const change of changes) {
+      if (change.op !== 'rename' || removed.has(change.uid)) continue
+      map.renderer.findNodeByUid(change.uid)?.setText(change.text)
+    }
+    const behavior = map.getConfig('createNewNodeBehavior')
+    try {
+      map.updateConfig({ createNewNodeBehavior: 'notActive' })
+      for (const [uid, texts] of grouped) {
+        const engineNode = map.renderer.findNodeByUid(uid)
+        if (!engineNode) throw new Error('要新增到的节点不存在')
+        map.execCommand('INSERT_MULTI_CHILD_NODE', [engineNode], uniqueTopics(texts).map((text) => createNode(text)))
+      }
+    } finally { map.updateConfig({ createNewNodeBehavior: behavior }) }
+  }
   function setIcon(icon: NodeIcon) {
     if (!isNodeIcon(icon)) return
     const nodes = [...(engine.value?.renderer.activeNodeList ?? [])]
@@ -235,5 +305,5 @@ export function useMindMap(
     if (isVsCode) return hostRequest('export', { content: result, filename: `${doc.value.title}.${type}`, encoding: 'dataUrl' })
     return true
   }
-  return { engine, selection, zoom, canUndo, canRedo, ready, command, insert, select, expansionTarget, applyExpansion, setIcon, clearIcons, remove, toggle, editText, style, properties, zoomBy, fit, resetZoom, capture, exportImage }
+  return { engine, selection, zoom, canUndo, canRedo, ready, command, insert, select, expansionTarget, applyExpansion, mapContext, applyMapChanges, setIcon, clearIcons, remove, toggle, editText, style, properties, zoomBy, fit, resetZoom, capture, exportImage }
 }

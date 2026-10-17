@@ -22,6 +22,8 @@ async function boot(page: Page) {
     }
     window.__testHost = host
     let aiShortcut = 'Mod+Alt+KeyA'
+    let aiPanel = { autoExpand: true, count: 5, expanded: false, anchor: null as { left: number; bottom: number } | null }
+    let commandShortcuts: Record<string, string> = {}
     let aiSettings = { baseURL: 'https://ai.example.test/v1', model: 'test-model', hasKey: false }
     const send = (message: Record<string, unknown>) => queueMicrotask(() => window.dispatchEvent(new MessageEvent('message', { data: message })))
     window.acquireVsCodeApi = () => ({
@@ -39,6 +41,16 @@ async function boot(page: Page) {
         if (message.type === 'ai.shortcut.set') {
           aiShortcut = String(message.shortcut)
           send({ type: 'result', id: message.id, data: aiShortcut })
+        }
+        if (message.type === 'ai.panel.get') send({ type: 'result', id: message.id, data: aiPanel })
+        if (message.type === 'ai.panel.set') {
+          aiPanel = message.panel as typeof aiPanel
+          send({ type: 'result', id: message.id, data: aiPanel })
+        }
+        if (message.type === 'shortcuts.get') send({ type: 'result', id: message.id, data: commandShortcuts })
+        if (message.type === 'shortcuts.set') {
+          commandShortcuts = message.shortcuts as Record<string, string>
+          send({ type: 'result', id: message.id, data: commandShortcuts })
         }
         if (message.type === 'ready') send({ type: 'document', text: host.text, version: host.version, dirty: false })
         if (message.type === 'edit' && !host.hold) {
@@ -171,6 +183,7 @@ test('VS Code persistent chat uses host models and automatically synchronizes ex
   expect(await page.evaluate(() => JSON.parse(window.__testHost.text).root.children.length)).toBe(0)
   await page.getByLabel('AI 对话消息').fill('扩展当前节点')
   await page.getByRole('button', { name: '发送', exact: true }).click()
+  await page.getByRole('button', { name: '查看 AI 回复', exact: true }).click()
   await expect(page.getByRole('log')).toContainText('宿主回复')
   await expect.poll(() => page.evaluate(() => JSON.parse(window.__testHost.text).root.children.length)).toBe(2)
   const message = await page.evaluate(() => window.__testHost.messages.find((item) => item.type === 'ai.chat'))
@@ -217,4 +230,32 @@ test('VS Code AI shortcut is configurable through host storage without a model o
   await page.keyboard.press('Control+Alt+b')
   await expect(input).toBeFocused()
   expect(await page.evaluate(() => window.__testHost.messages.some((item) => item.type === 'ai.chat'))).toBe(false)
+})
+
+test('VS Code AI panel options persist through host storage', async ({ page }) => {
+  await boot(page)
+  await page.getByRole('button', { name: '展开 AI 回复', exact: true }).click()
+  await page.getByRole('button', { name: 'AI 连接设置', exact: true }).click()
+  await page.getByLabel('回复后自动扩展当前节点').uncheck()
+  await page.getByLabel('AI 子主题数量').fill('3')
+  await expect.poll(() => page.evaluate(() => {
+    const saved = window.__testHost.messages.filter((item) => item.type === 'ai.panel.set').at(-1)
+    return saved?.panel
+  })).toEqual({ autoExpand: false, count: 3, expanded: true, anchor: null })
+  expect(await page.evaluate(() => localStorage.getItem('xmindmap.ai.panel.v1'))).toBeNull()
+})
+
+test('VS Code command shortcuts can be changed through host storage', async ({ page }) => {
+  await boot(page)
+  await page.getByRole('button', { name: '快捷键', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: '快捷键' })
+  await expect(dialog.getByText('Tab / Insert')).toBeVisible()
+  await dialog.getByRole('button', { name: '修改保存快捷键' }).click()
+  await page.keyboard.press('Control+Shift+S')
+  await expect.poll(() => page.evaluate(() => {
+    const saved = window.__testHost.messages.filter((item) => item.type === 'shortcuts.set').at(-1)
+    return saved?.shortcuts
+  })).toEqual({ save: 'Control+Shift+s' })
+  await expect(dialog.getByText('Ctrl+Shift+S')).toBeVisible()
+  expect(await page.evaluate(() => localStorage.getItem('xmindmap.command-shortcuts.v1'))).toBeNull()
 })

@@ -23,7 +23,8 @@ export function supportsLineStyle(layout: Layout): boolean {
   return ['mindMap', 'logicalStructure', 'logicalStructureLeft', 'organizationStructure', 'verticalTimeline'].includes(layout)
 }
 
-export type ThemeId = 'studio' | 'forest' | 'rose' | 'mono'
+export const themeIds = ['studio', 'forest', 'rose', 'mono', 'amber', 'sea', 'dusk', 'ember', 'olive', 'night'] as const
+export type ThemeId = (typeof themeIds)[number]
 export type NodeShape = 'rectangle' | 'roundedRectangle' | 'ellipse' | 'diamond'
 
 export interface NodeData {

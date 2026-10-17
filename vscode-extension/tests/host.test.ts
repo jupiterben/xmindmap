@@ -15,7 +15,7 @@ async function until(check: () => boolean, label: string): Promise<void> {
 }
 
 export async function run(): Promise<void> {
-  const extension = vscode.extensions.getExtension('xmindmap-local.xmindmap')!
+  const extension = vscode.extensions.getExtension('infloop.xmindmap')!
   assert.ok(extension)
   await extension.activate()
   const commands = await vscode.commands.getCommands()
@@ -26,7 +26,7 @@ export async function run(): Promise<void> {
   assert.equal(Buffer.from(exportBytes('data:image/svg+xml,%3Csvg%3E%3C/svg%3E', 'dataUrl', 'map.svg').bytes).toString(), '<svg></svg>')
   const testRoot = process.env.XMINDMAP_TEST_ROOT ?? tmpdir()
   const directory = await mkdtemp(join(testRoot, 'xmindmap-host-'))
-  const file = join(directory, 'test.xmindmap')
+  const file = join(directory, 'test.xmm')
   const original = newContent()
   await writeFile(file, original)
   const uri = vscode.Uri.file(file)
