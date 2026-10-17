@@ -203,6 +203,29 @@ test('stopping, auth failure and invalid output preserve the tree and permit ret
   await expect(page.locator('.outline-row')).toHaveCount(18)
 })
 
+test('ai chat panel can be dragged inside the canvas', async ({ page }) => {
+  await page.setViewportSize({ width: 1280, height: 900 })
+  await open(page)
+  const chat = page.getByRole('complementary', { name: 'AI 对话' })
+  const handle = page.getByRole('button', { name: '拖动 AI 输入框' })
+  const before = (await chat.boundingBox())!
+  const grip = (await handle.boundingBox())!
+  await page.mouse.move(grip.x + grip.width / 2, grip.y + grip.height / 2)
+  await page.mouse.down()
+  await page.mouse.move(grip.x + grip.width / 2 + 120, grip.y + grip.height / 2 - 160, { steps: 8 })
+  await page.mouse.up()
+  const after = (await chat.boundingBox())!
+  expect(after.x).toBeGreaterThan(before.x + 80)
+  expect(after.y).toBeLessThan(before.y - 80)
+  const canvas = (await page.locator('.canvas-area').boundingBox())!
+  expect(after.x).toBeGreaterThanOrEqual(canvas.x - 1)
+  expect(after.y).toBeGreaterThanOrEqual(canvas.y - 1)
+  expect(after.x + after.width).toBeLessThanOrEqual(canvas.x + canvas.width + 1)
+  expect(after.y + after.height).toBeLessThanOrEqual(canvas.y + canvas.height + 1)
+  await page.getByLabel('AI 对话消息').fill('仍然可以输入')
+  await expect(page.getByLabel('AI 对话消息')).toHaveValue('仍然可以输入')
+})
+
 for (const width of [1280, 390]) {
   test(`persistent chat and modal settings fit at ${width}px and outside clicks preserve settings`, async ({ page }) => {
     await page.setViewportSize({ width, height: 900 })

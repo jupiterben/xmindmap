@@ -3,8 +3,8 @@ import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
 import {
   ArrowDownToLine, ArrowUpFromLine, Check, ChevronDown, ChevronRight, Copy, Download,
   FilePlus2, FileText, FolderOpen, GitBranch, ListTree, LoaderCircle, Maximize,
-  Minus, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
-  Plus, Redo2, Save, Search, Settings2, Sparkles, Trash2, Undo2, Upload, X,
+  Minus, Moon, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
+  Plus, Redo2, Save, Search, Settings2, Sparkles, Sun, Trash2, Undo2, Upload, X,
 } from 'lucide-vue-next'
 import IconButton from './components/IconButton.vue'
 import OutlineTree from './components/OutlineTree.vue'
@@ -14,6 +14,7 @@ import AiChatPanel from './components/AiChatPanel.vue'
 import type { AiExpansionTarget } from './domain/ai'
 import { useWorkspace } from './composables/useWorkspace'
 import { useMindMap } from './composables/useMindMap'
+import { useUiTheme } from './composables/useUiTheme'
 import { flattenTree, serializeDocument } from './domain/documents'
 import { downloadText, exportMarkdown, readDocumentFile } from './domain/files'
 import { themes } from './domain/themes'
@@ -25,6 +26,7 @@ import { shortcutLabel } from './domain/shortcuts'
 
 const store = useWorkspace()
 const { active, workspace, error: storageError, saved, loaded } = store
+const { theme: uiTheme, toggle: toggleUiTheme } = useUiTheme()
 const canvas = ref<HTMLElement | null>(null)
 const message = ref('')
 const isError = ref(false)
@@ -207,6 +209,7 @@ onBeforeUnmount(() => {
         <span class="save-state" :class="{ failed: storageError }"><span class="status-dot"></span>{{ storageError ? '保存异常' : saved ? '所有更改已保存' : isVsCode ? '未保存' : '正在保存…' }}</span>
       </div>
       <div class="header-actions">
+        <IconButton :icon="uiTheme === 'dark' ? Sun : Moon" :label="uiTheme === 'dark' ? '切换到浅色' : '切换到深色'" @click="toggleUiTheme" />
         <IconButton :icon="Save" label="保存" @click="save" />
         <button class="button import-button" :disabled="busy" @click="importInput?.click()"><Upload :size="16" /><span>导入</span></button>
         <details ref="exportMenu" class="export-menu">

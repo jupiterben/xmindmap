@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
-import { Bot, ChevronDown, ChevronUp, LoaderCircle, Send, Settings2, Sparkles, Trash2, X } from 'lucide-vue-next'
+import { Bot, ChevronDown, ChevronUp, GripHorizontal, LoaderCircle, Send, Settings2, Sparkles, Trash2, X } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import AiShortcutSettings from './AiShortcutSettings.vue'
 import AiConnectionDialog from './AiConnectionDialog.vue'
@@ -30,7 +30,13 @@ interface ChatTurn {
   target: AiExpansionTarget
 }
 const composer = ref<HTMLTextAreaElement | null>(null)
+const panel = ref<HTMLElement | null>(null)
 const log = ref<HTMLElement | null>(null)
+const position = ref<{ left: number; top: number } | null>(null)
+const dragging = ref(false)
+const panelStyle = computed(() => position.value ? { left: `${position.value.left}px`, top: `${position.value.top}px`, bottom: 'auto', right: 'auto' } : undefined)
+let stopDrag: (() => void) | undefined
+let resizeObserver: ResizeObserver | undefined
 const settings = ref<AiSettingsStatus>({ ...defaultAiSettings, hasKey: false })
 const models = ref<string[]>([])
 const model = ref('')
@@ -60,6 +66,66 @@ const destination = computed(() => {
 const canSend = computed(() => !!props.target && !!text.value.trim() && !!model.value.trim() && !loading.value && !busy.value && !fetchingModels.value && !connectionBusy.value && !settingsOpen.value && completed.value.length < 10)
 function focusInput() {
   composer.value?.focus()
+}
+function clamp(el: HTMLElement, parent: HTMLElement, left: number, top: number) {
+  return {
+    left: Math.min(Math.max(0, parent.clientWidth - el.offsetWidth), Math.max(0, left)),
+    top: Math.min(Math.max(0, parent.clientHeight - el.offsetHeight), Math.max(0, top)),
+  }
+}
+function reclamp() {
+  const el = panel.value
+  const parent = el?.offsetParent
+  if (!el || !position.value || !(parent instanceof HTMLElement)) return
+  position.value = clamp(el, parent, position.value.left, position.value.top)
+}
+function nudge(event: KeyboardEvent) {
+  const el = panel.value
+  const parent = el?.offsetParent
+  if (!el || !(parent instanceof HTMLElement)) return
+  const step = event.shiftKey ? 24 : 8
+  const delta = { ArrowLeft: [-step, 0], ArrowRight: [step, 0], ArrowUp: [0, -step], ArrowDown: [0, step] }[event.key]
+  if (!delta) return
+  event.preventDefault()
+  const rect = el.getBoundingClientRect()
+  const parentRect = parent.getBoundingClientRect()
+  const left = (position.value?.left ?? rect.left - parentRect.left) + delta[0]
+  const top = (position.value?.top ?? rect.top - parentRect.top) + delta[1]
+  position.value = clamp(el, parent, left, top)
+}
+function startDrag(event: PointerEvent) {
+  if (event.button !== 0 || !panel.value) return
+  const target = event.target
+  if (target instanceof Element && target.closest('button, a, input, select, textarea, summary')) return
+  const el = panel.value
+  const parent = el.offsetParent
+  if (!(parent instanceof HTMLElement)) return
+  event.preventDefault()
+  const parentRect = parent.getBoundingClientRect()
+  const rect = el.getBoundingClientRect()
+  const origin = { x: event.clientX, y: event.clientY, left: rect.left - parentRect.left, top: rect.top - parentRect.top }
+  stopDrag?.()
+  position.value = clamp(el, parent, origin.left, origin.top)
+  dragging.value = true
+  el.setPointerCapture(event.pointerId)
+  const move = (ev: PointerEvent) => {
+    if (ev.pointerId !== event.pointerId) return
+    position.value = clamp(el, parent, origin.left + ev.clientX - origin.x, origin.top + ev.clientY - origin.y)
+  }
+  const end = (ev: PointerEvent) => {
+    if (ev.pointerId !== event.pointerId) return
+    stopDrag?.()
+  }
+  stopDrag = () => {
+    dragging.value = false
+    stopDrag = undefined
+    el.removeEventListener('pointermove', move)
+    el.removeEventListener('pointerup', end)
+    el.removeEventListener('pointercancel', end)
+  }
+  el.addEventListener('pointermove', move)
+  el.addEventListener('pointerup', end)
+  el.addEventListener('pointercancel', end)
 }
 defineExpose({ focusInput })
 async function scrollLog() {
@@ -184,7 +250,11 @@ function clearChat() {
   turns.value = []
   error.value = ''
 }
-watch(expanded, (value) => { if (value) void scrollLog() })
+watch(expanded, async (value) => {
+  if (value) void scrollLog()
+  await nextTick()
+  reclamp()
+})
 watch(() => props.target ? `${props.target.documentId}:${props.target.uid}` : '', () => {
   cancel()
   turns.value = []
@@ -192,6 +262,11 @@ watch(() => props.target ? `${props.target.documentId}:${props.target.uid}` : ''
   error.value = ''
 }, { flush: 'sync' })
 onMounted(async () => {
+  const parent = panel.value?.offsetParent
+  if (parent instanceof HTMLElement) {
+    resizeObserver = new ResizeObserver(() => reclamp())
+    resizeObserver.observe(parent)
+  }
   try {
     const value = await getAiConnection()
     if (disposed) return
@@ -202,13 +277,14 @@ onMounted(async () => {
   } catch { if (!disposed) error.value = '无法读取 AI 设置' }
   finally { loading.value = false }
 })
-onBeforeUnmount(() => { disposed = true; cancel(); stopModels() })
+onBeforeUnmount(() => { disposed = true; stopDrag?.(); resizeObserver?.disconnect(); cancel(); stopModels() })
 </script>
 
 <template>
-  <aside class="ai-chat-panel" :class="{ expanded }" aria-label="AI 对话">
+  <aside ref="panel" class="ai-chat-panel" :class="{ expanded, dragging }" :style="panelStyle" aria-label="AI 对话">
+    <div class="ai-chat-drag" role="button" tabindex="0" aria-label="拖动 AI 输入框" title="拖动" @pointerdown="startDrag" @keydown="nudge"><GripHorizontal :size="16" :stroke-width="1.7" aria-hidden="true" /></div>
     <div v-show="expanded" class="ai-chat-detail">
-      <div class="ai-chat-detail-top">
+      <div class="ai-chat-detail-top" @pointerdown="startDrag">
         <h2><Sparkles :size="15" />AI 对话</h2>
         <div class="ai-chat-target"><span>当前节点</span><strong>{{ target?.topic || '未选中单个节点' }}</strong></div>
         <span class="ai-auto-state">{{ autoExpand ? '回复后自动扩展' : '仅对话' }}</span>
