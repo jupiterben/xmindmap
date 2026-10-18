@@ -4,7 +4,7 @@
 
 ## 安装
 
-在 VS Code 扩展视图菜单中选择 **Install from VSIX / 从 VSIX 安装**，选择本目录构建出的 `xmindmap-0.1.1.vsix`。
+在 VS Code 扩展视图菜单中选择 **Install from VSIX / 从 VSIX 安装**，选择本目录构建出的 `xmindmap-0.1.2.vsix`。
 
 Marketplace 发布者 ID 为 `infloop`。本地安装仍可使用本目录构建出的 VSIX。
 
@@ -65,7 +65,7 @@ npm run package
 vscode-extension/
   dist/extension.cjs          # TypeScript 扩展宿主 bundle
   webview/                   # 共享编辑器的离线静态资源
-  xmindmap-0.1.1.vsix         # 可安装的插件包
+  xmindmap-0.1.2.vsix         # 可安装的插件包
 ```
 
 ## 开发
@@ -73,6 +73,20 @@ vscode-extension/
 用 VS Code 单独打开 `vscode-extension` 目录，按 F5 运行 `Run XMindmap Extension`。调试前自动构建宿主和 Webview。网页源码仍位于仓库根目录 `src/`，不复制维护第二套编辑器。
 
 最低 VS Code 版本：1.96。开发构建使用 Node.js 22.12+。
+
+## 自动发布
+
+推送标签 `v*` 且与 `package.json` 的 `version` 一致时，GitHub Actions 会打包并发布到 Visual Studio Marketplace 和 Open VSX（Cursor 扩展市场）。例如当前版本是 `0.1.2` 时：
+
+```sh
+git tag v0.1.2
+git push origin v0.1.2
+```
+
+在仓库 Settings → Secrets and variables → Actions 中添加：
+
+- `VSCE_PAT`：Azure DevOps Personal Access Token，范围包含 Marketplace → Manage。
+- `OVSX_PAT`：open-vsx.org 的 Access Token。命名空间须为 `infloop`。
 
 ## 验证
 

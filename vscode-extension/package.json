@@ -2,8 +2,12 @@
   "name": "xmindmap",
   "displayName": "XMindmap",
   "description": "Edit mind maps in VS Code, with an outline, themes, line styles, and import/export.",
-  "version": "0.1.1",
+  "version": "0.1.2",
   "publisher": "infloop",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/jupiterben/xmindmap.git"
+  },
   "icon": "icon.png",
   "license": "SEE LICENSE IN THIRD_PARTY_NOTICES.md",
   "engines": { "vscode": "^1.96.0" },
@@ -35,7 +39,7 @@
     "compile": "tsc --noEmit && node scripts/build.mjs",
     "build": "npm run compile && npm --prefix .. run build:webview",
     "vscode:prepublish": "npm run build",
-    "package": "vsce package --no-dependencies --allow-missing-repository --out xmindmap-0.1.1.vsix",
+    "package": "vsce package --no-dependencies --out xmindmap-0.1.2.vsix",
     "test": "npm run compile && node scripts/test.mjs"
   },
   "devDependencies": {

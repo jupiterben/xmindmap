@@ -1,0 +1,52 @@
+name: Publish extension
+
+on:
+  push:
+    tags:
+      - "v*"
+
+permissions:
+  contents: read
+
+jobs:
+  publish:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+          cache-dependency-path: |
+            package-lock.json
+            vscode-extension/package-lock.json
+      - run: npm ci
+      - run: npm ci
+        working-directory: vscode-extension
+      - name: Check tag matches the extension version
+        working-directory: vscode-extension
+        run: |
+          version="$(node -p "require('./package.json').version")"
+          tag="${GITHUB_REF_NAME#v}"
+          if [ "$version" != "$tag" ]; then
+            echo "Tag v$tag does not match vscode-extension/package.json version $version"
+            exit 1
+          fi
+      - name: Package
+        working-directory: vscode-extension
+        run: npx vsce package --no-dependencies --out xmindmap.vsix
+      - name: Publish to Visual Studio Marketplace
+        uses: HaaLeo/publish-vscode-extension@v1.6.0
+        with:
+          pat: ${{ secrets.VSCE_PAT }}
+          registryUrl: https://marketplace.visualstudio.com
+          extensionFile: vscode-extension/xmindmap.vsix
+          dependencies: false
+          skipDuplicate: true
+      - name: Publish to Open VSX
+        uses: HaaLeo/publish-vscode-extension@v1.6.0
+        with:
+          pat: ${{ secrets.OVSX_PAT }}
+          extensionFile: vscode-extension/xmindmap.vsix
+          dependencies: false
+          skipDuplicate: true

@@ -23,7 +23,7 @@ npm ci
 npm run package
 ```
 
-在 VS Code 中通过“从 VSIX 安装”选择生成的 `vscode-extension/xmindmap-0.1.1.vsix`。插件提供“新建思维导图”和“用导图编辑器打开”命令。
+在 VS Code 中通过“从 VSIX 安装”选择生成的 `vscode-extension/xmindmap-0.1.2.vsix`。插件提供“新建思维导图”和“用导图编辑器打开”命令。
 
 ## 迁移方式
 
