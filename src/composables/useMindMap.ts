@@ -2,6 +2,7 @@ import { markRaw, onBeforeUnmount, ref, shallowRef, watch } from 'vue'
 import type { Ref } from 'vue'
 import MindMap from 'simple-mind-map/index.js'
 import Drag from '../engine/PreciseDrag'
+import { keepSelectionOnPan } from '../engine/keepSelectionOnPan'
 import Export from 'simple-mind-map/src/plugins/Export.js'
 import Select from 'simple-mind-map/src/plugins/Select.js'
 import KeyboardNavigation from 'simple-mind-map/src/plugins/KeyboardNavigation.js'
@@ -23,6 +24,7 @@ export function useMindMap(
   doc: Ref<MapDocument>,
   update: (root: MindNode) => void,
   reportError: (message: string) => void,
+  openLink: (link: string) => void,
 ) {
   const engine = shallowRef<MindMap | null>(null)
   const selection = ref<NodeData[]>([])
@@ -85,6 +87,7 @@ export function useMindMap(
       enableAutoEnterTextEditWhenKeydown: false,
       enableFreeDrag: false,
       resetScaleOnMoveNodeToCenter: false,
+      customHyperlinkJump(link) { openLink(link) },
       customCheckEnableShortcut(event) {
         const target = event.target
         if (!(target instanceof Element)) return false
@@ -96,6 +99,7 @@ export function useMindMap(
         reportError('导图操作失败，请重试或导出 JSON 备份')
       },
     }))
+    keepSelectionOnPan(map)
     engine.value = map
     engineDocumentId = doc.value.id
     const documentId = doc.value.id

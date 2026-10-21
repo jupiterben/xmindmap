@@ -1,8 +1,9 @@
 <script setup lang="ts">
-import { ref, watch } from 'vue'
+import { computed, ref, watch } from 'vue'
 import { Bold, Italic, ImagePlus, Trash2 } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import { safeLink } from '../domain/documents'
+import { normalizeRelativeMarkdownPath } from '../domain/links'
 import type { NodeData, NodeShape } from '../domain/types'
 
 const props = defineProps<{ nodes: NodeData[] }>()
@@ -11,6 +12,7 @@ const emit = defineEmits<{
   properties: [values: { text: string; note: string; hyperlink: string; tags: string[] }]
   image: [file: File]
   removeImage: []
+  preview: [path: string]
 }>()
 const text = ref('')
 const note = ref('')
@@ -18,6 +20,9 @@ const hyperlink = ref('')
 const tags = ref('')
 const error = ref('')
 const imageInput = ref<HTMLInputElement | null>(null)
+const markdownPath = computed(() => {
+  try { return normalizeRelativeMarkdownPath(hyperlink.value) } catch { return '' }
+})
 const colors = ['#365edc', '#257763', '#a9456c', '#d0a333', '#3e4653', '#ffffff']
 watch(() => props.nodes, (nodes) => {
   const node = nodes[0]
@@ -73,7 +78,8 @@ function chooseImage(event: Event) {
       <div class="section-label">节点内容</div>
       <label class="field-label">名称<textarea v-model="text" aria-label="节点名称" rows="2" maxlength="20000"></textarea></label>
       <label class="field-label">备注<textarea v-model="note" aria-label="节点备注" rows="3" maxlength="20000"></textarea></label>
-      <label class="field-label">链接<input v-model="hyperlink" aria-label="节点链接" type="text" placeholder="https://" /></label>
+      <label class="field-label">链接<input v-model="hyperlink" aria-label="节点链接" type="text" placeholder="https:// 或 docs/note.md" /></label>
+      <button v-if="markdownPath" type="button" class="text-button" @click="emit('preview', markdownPath)">预览 Markdown</button>
       <label class="field-label">标签<input v-model="tags" aria-label="节点标签" type="text" placeholder="设计, 待办" /></label>
       <p v-if="error" role="alert" class="field-error">{{ error }}</p>
       <button class="button apply-button" type="submit">应用修改</button>

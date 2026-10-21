@@ -111,8 +111,9 @@ describe('document data', () => {
   it('validates link schemes', () => {
     expect(safeLink('https://example.com')).toBe('https://example.com/')
     expect(safeLink('mailto:user@example.com')).toBe('mailto:user@example.com')
+    expect(safeLink('docs/note.md')).toBe('docs/note.md')
     expect(safeLink('')).toBe('')
-    for (const link of ['javascript:alert(1)', 'data:text/html,hi', '//example.com', 'foo']) expect(() => safeLink(link)).toThrow()
+    for (const link of ['javascript:alert(1)', 'data:text/html,hi', '//example.com', 'foo', '/abs/note.md']) expect(() => safeLink(link)).toThrow()
   })
   it('supports a collapsed outline without dropping stored children', () => {
     const root = createNode('root', [createNode('branch', [createNode('leaf')])])

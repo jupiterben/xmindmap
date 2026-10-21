@@ -64,6 +64,10 @@ async function boot(page: Page) {
           send({ type: 'result', id: message.id, ok: true })
         }
         if (message.type === 'export' || message.type === 'create') send({ type: 'result', id: message.id, ok: !host.cancel })
+        if (message.type === 'file.read') {
+          if (message.path === 'notes/readme.md') send({ type: 'result', id: message.id, data: '# 说明\n\n这是**本地**文档' })
+          else send({ type: 'result', id: message.id, error: '找不到文件' })
+        }
       },
     })
   })
@@ -243,6 +247,19 @@ test('VS Code AI panel options persist through host storage', async ({ page }) =
     return saved?.panel
   })).toEqual({ autoExpand: false, count: 3, expanded: true, anchor: null })
   expect(await page.evaluate(() => localStorage.getItem('xmindmap.ai.panel.v1'))).toBeNull()
+})
+
+test('VS Code previews markdown linked by a relative path', async ({ page }) => {
+  await boot(page)
+  await page.getByRole('button', { name: '切换属性面板', exact: true }).click()
+  await page.getByLabel('节点链接', { exact: true }).fill('notes/readme.md')
+  await page.getByRole('button', { name: '应用修改', exact: true }).click()
+  await expect.poll(() => page.evaluate(() => JSON.parse(window.__testHost.text).root.data.hyperlink)).toBe('notes/readme.md')
+  await page.getByRole('button', { name: '预览 Markdown', exact: true }).click()
+  const dialog = page.getByRole('dialog', { name: 'notes/readme.md' })
+  await expect(dialog.getByRole('heading', { name: '说明' })).toBeVisible()
+  await expect(dialog.locator('strong')).toHaveText('本地')
+  expect(await page.evaluate(() => window.__testHost.messages.some((item) => item.type === 'file.read' && item.path === 'notes/readme.md'))).toBe(true)
 })
 
 test('VS Code command shortcuts can be changed through host storage', async ({ page }) => {

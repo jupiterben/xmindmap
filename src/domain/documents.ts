@@ -1,5 +1,6 @@
 import { layouts, lineStyles, themeIds } from './types'
 import { normalizeIcons } from './icons'
+import { normalizeRelativeMarkdownPath } from './links'
 import type { MapDocument, MindNode, NodeData, OutlineEntry, ThemeId, Workspace } from './types'
 
 export const STORAGE_KEY = 'xmindmap.workspace.v1'
@@ -48,12 +49,16 @@ export function isRecord(value: unknown): value is Record<string, unknown> {
 }
 
 export function safeLink(value: string): string {
-  if (!value.trim()) return ''
+  const trimmed = value.trim()
+  if (!trimmed) return ''
   try {
-    const url = new URL(value.trim())
+    const url = new URL(trimmed)
     if (['https:', 'http:', 'mailto:'].includes(url.protocol)) return url.href
-  } catch { /* Invalid URLs are rejected at the input boundary. */ }
-  throw new Error('链接仅支持完整的 http、https 或 mailto 地址')
+  } catch { /* Relative paths are validated below. */ }
+  try {
+    return normalizeRelativeMarkdownPath(trimmed)
+  } catch { /* Fall through to the shared rejection. */ }
+  throw new Error('链接仅支持完整的 http、https、mailto 地址，或 Markdown 相对路径')
 }
 
 function plainText(value: string): string {

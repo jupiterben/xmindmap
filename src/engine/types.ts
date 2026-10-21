@@ -43,6 +43,7 @@ export interface EngineOptions {
   enableFreeDrag: boolean
   resetScaleOnMoveNodeToCenter: boolean
   customCheckEnableShortcut: (event: KeyboardEvent) => boolean
+  customHyperlinkJump: (link: string) => void
   errorHandler: (code: string, error: unknown) => void
 }
 

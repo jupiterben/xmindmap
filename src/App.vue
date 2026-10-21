@@ -9,6 +9,7 @@ import {
 import IconButton from './components/IconButton.vue'
 import OutlineTree from './components/OutlineTree.vue'
 import NodeInspector from './components/NodeInspector.vue'
+import MarkdownPreview from './components/MarkdownPreview.vue'
 import NodeIconPicker from './components/NodeIconPicker.vue'
 import AiChatPanel from './components/AiChatPanel.vue'
 import ShortcutSettings from './components/ShortcutSettings.vue'
@@ -16,12 +17,13 @@ import type { AiExpansionTarget, AiMapChange, AiMapContext } from './domain/ai'
 import { useWorkspace } from './composables/useWorkspace'
 import { useMindMap } from './composables/useMindMap'
 import { useUiTheme } from './composables/useUiTheme'
-import { flattenTree, serializeDocument } from './domain/documents'
+import { flattenTree, safeLink, serializeDocument } from './domain/documents'
+import { isRelativeMarkdownPath } from './domain/links'
 import { downloadText, exportMarkdown, readDocumentFile } from './domain/files'
 import { themes } from './domain/themes'
 import { layouts, lineStyles, supportsLineStyle } from './domain/types'
 import type { Layout, NodeData, ThemeId } from './domain/types'
-import { isVsCode } from './platform/vscode'
+import { isVsCode, vscode } from './platform/vscode'
 import { useAiShortcut } from './composables/useAiShortcut'
 import { useCommandShortcuts } from './composables/useCommandShortcuts'
 import { shortcutLabel } from './domain/shortcuts'
@@ -39,7 +41,22 @@ function notify(text: string, error = false) {
   clearTimeout(messageTimer)
   messageTimer = setTimeout(() => { message.value = '' }, error ? 8000 : 3000)
 }
-const map = useMindMap(canvas, active, store.updateRoot, (text) => notify(text, true))
+const markdownPreview = ref<InstanceType<typeof MarkdownPreview> | null>(null)
+function openNodeLink(link: string) {
+  if (isRelativeMarkdownPath(link)) {
+    void markdownPreview.value?.open(link)
+    return
+  }
+  try {
+    const url = safeLink(link)
+    if (!/^(https?:|mailto:)/i.test(url)) throw new Error('无法打开链接')
+    if (isVsCode) vscode?.postMessage({ type: 'openExternal', url })
+    else window.open(url, '_blank', 'noopener,noreferrer')
+  } catch (reason) {
+    notify(reason instanceof Error ? reason.message : '无法打开链接', true)
+  }
+}
+const map = useMindMap(canvas, active, store.updateRoot, (text) => notify(text, true), openNodeLink)
 store.setCapture(map.capture)
 const { selection, ready, zoom, canUndo, canRedo } = map
 const leftOpen = ref(window.innerWidth > 900)
@@ -330,7 +347,7 @@ onBeforeUnmount(() => {
       <aside v-if="rightOpen" class="right-panel">
         <div class="panel-heading"><span><Settings2 :size="16" />节点</span></div>
         <div class="inspector-content">
-          <NodeInspector :nodes="selection" @style="style" @properties="map.properties" @image="addImage" @remove-image="removeImage" />
+          <NodeInspector :nodes="selection" @style="style" @properties="map.properties" @image="addImage" @remove-image="removeImage" @preview="openNodeLink" />
         </div>
         <div class="panel-bottom"><span class="status-dot"></span>{{ selection.length ? `已选择 ${selection.length} 个节点` : '未选择节点' }}</div>
       </aside>
@@ -341,6 +358,7 @@ onBeforeUnmount(() => {
     <div v-if="message" class="toast" :class="{ error: isError }" :role="isError ? 'alert' : 'status'"><component :is="isError ? X : Check" :size="17" />{{ message }}<button aria-label="关闭提示" @click="message = ''"><X :size="14" /></button></div>
     <div v-if="busy" class="busy-indicator" role="status"><LoaderCircle :size="16" class="spin" />正在处理文件…</div>
 
+    <MarkdownPreview ref="markdownPreview" />
     <ShortcutSettings ref="shortcutDialog" :shortcuts="commandShortcuts.shortcuts.value" :mac="aiShortcut.mac" :loading="commandShortcuts.loading.value" :load-error="commandShortcuts.error.value" :save="commandShortcuts.update" :reset="commandShortcuts.reset" />
     <dialog ref="confirmDialog" class="confirm-dialog" @click="($event.target === confirmDialog) && confirmDialog?.close()">
       <form method="dialog"><div class="dialog-heading"><h2>删除导图？</h2><IconButton :icon="X" label="取消删除" @click="confirmDialog?.close()" /></div><p>“{{ active.title }}” 将从本机移除，此操作无法撤销。</p><div class="dialog-actions"><button class="button" value="cancel">取消</button><button type="button" class="button danger" @click="deleteDocument">确认删除</button></div></form>

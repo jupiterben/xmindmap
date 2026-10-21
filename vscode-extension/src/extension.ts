@@ -1,12 +1,11 @@
 import * as vscode from 'vscode'
-import { AI_PROVIDERS } from '../../src/domain/ai'
-import { isRecord } from '../../src/domain/documents'
+import { isRecord, safeLink } from '../../src/domain/documents'
 import { exportBytes, newContent, parseEdit, validateContent } from './document'
+import { readWorkspaceMarkdown } from './markdownFile'
 import { webviewHtml } from './webview'
 import { AiController } from './ai'
 
 const VIEW_TYPE = 'xmindmap.editor'
-const keyPages = new Set(AI_PROVIDERS.flatMap((provider) => provider.keyURL ? [provider.keyURL] : []))
 
 export class MindMapEditor implements vscode.CustomTextEditorProvider {
   constructor(private readonly context: vscode.ExtensionContext) {}
@@ -81,8 +80,18 @@ export class MindMapEditor implements vscode.CustomTextEditorProvider {
 
     subscriptions.push(panel.webview.onDidReceiveMessage((message: unknown) => {
       if (!isRecord(message)) return
-      if (message.type === 'openExternal' && typeof message.url === 'string' && keyPages.has(message.url)) {
-        void vscode.env.openExternal(vscode.Uri.parse(message.url))
+      if (message.type === 'openExternal' && typeof message.url === 'string') {
+        try {
+          const url = safeLink(message.url)
+          if (/^(https?:|mailto:)/i.test(url)) void vscode.env.openExternal(vscode.Uri.parse(url))
+        } catch { /* Unsafe links are ignored. */ }
+        return
+      }
+      if (message.type === 'file.read' && typeof message.id === 'number') {
+        void readWorkspaceMarkdown(document, message.path).then(
+          (content) => post({ type: 'result', id: message.id, data: content }),
+          (reason) => post({ type: 'result', id: message.id, error: reason instanceof Error ? reason.message : String(reason) }),
+        )
         return
       }
       // Network requests must not block document saves or cancellation messages.
