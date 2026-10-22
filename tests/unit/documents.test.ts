@@ -1,7 +1,7 @@
 import { describe, expect, it } from 'vitest'
 import {
   createDocument, createExample, createNode, flattenTree, loadWorkspace, openMindMapText, parseDocument,
-  safeLink, saveWorkspace, serializeDocument, STORAGE_KEY, validateTree,
+  safeLink, sameTree, saveWorkspace, serializeDocument, STORAGE_KEY, validateTree,
 } from '../../src/domain/documents'
 import { exportMarkdown, importFreeMind, importMarkdown, readDocumentFile } from '../../src/domain/files'
 import { validateContent } from '../../vscode-extension/src/document'
@@ -123,6 +123,15 @@ describe('document data', () => {
   })
 })
 
+describe('tree comparison', () => {
+  it('ignores key order but detects content changes', () => {
+    const node = createNode('A')
+    const reordered = { children: node.children, data: { text: 'A', uid: node.data.uid, expand: true } }
+    expect(sameTree(node, reordered)).toBe(true)
+    expect(sameTree(node, { ...reordered, data: { ...reordered.data, text: 'B' } })).toBe(false)
+  })
+})
+
 describe('local workspace', () => {
   function storage() {
     const values = new Map<string, string>()
@@ -139,6 +148,19 @@ describe('local workspace', () => {
     expect(loaded.documents[1]?.lineStyle).toBe('direct')
     expect(loaded.documents.map((doc) => doc.id)).toEqual([a.id, b.id])
     expect(loaded.documents[0]?.createdAt).toBe(a.createdAt)
+  })
+  it('keeps a valid desktop file binding and ignores invalid ones', () => {
+    const local = storage()
+    const bound = createDocument('Bound')
+    bound.filePath = 'C:\\maps\\bound.xmm'
+    saveWorkspace(local, { version: 1, activeId: bound.id, documents: [bound] })
+    expect(loadWorkspace(local)?.documents[0]?.filePath).toBe('C:\\maps\\bound.xmm')
+    expect(serializeDocument(bound)).not.toContain('filePath')
+
+    const raw = JSON.parse(local.getItem(STORAGE_KEY)!) as { documents: Record<string, unknown>[] }
+    raw.documents[0]!.filePath = 42
+    local.setItem(STORAGE_KEY, JSON.stringify(raw))
+    expect(loadWorkspace(local)?.documents[0]?.filePath).toBeUndefined()
   })
   it('does not overwrite corrupt data', () => {
     const local = storage()

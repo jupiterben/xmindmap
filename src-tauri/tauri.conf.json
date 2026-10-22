@@ -1,0 +1,60 @@
+{
+  "$schema": "../node_modules/@tauri-apps/cli/config.schema.json",
+  "productName": "XMindmap",
+  "version": "0.1.0",
+  "identifier": "com.jupyterben.xmindmap",
+  "build": {
+    "frontendDist": "../dist",
+    "devUrl": "http://127.0.0.1:5173",
+    "beforeDevCommand": "npm run dev",
+    "beforeBuildCommand": "npm run build:app"
+  },
+  "app": {
+    "windows": [
+      {
+        "title": "XMindmap · 思维导图",
+        "width": 1440,
+        "height": 900,
+        "minWidth": 1024,
+        "minHeight": 680,
+        "resizable": true,
+        "fullscreen": false,
+        "center": true
+      }
+    ],
+    "security": {
+      "csp": null
+    }
+  },
+  "bundle": {
+    "active": true,
+    "targets": [
+      "nsis"
+    ],
+    "icon": [
+      "icons/32x32.png",
+      "icons/128x128.png",
+      "icons/128x128@2x.png",
+      "icons/icon.icns",
+      "icons/icon.ico"
+    ],
+    "shortDescription": "本地思维导图工作台",
+    "longDescription": "XMindmap 是基于 Vue 3 与 simple-mind-map 的本地思维导图工作台，支持多文档、主题、图标、大纲和多种格式导入导出。",
+    "fileAssociations": [
+      {
+        "ext": ["xmm"],
+        "name": "XMindmap Document",
+        "description": "XMindmap 思维导图",
+        "role": "Editor",
+        "mimeType": "application/json"
+      },
+      {
+        "ext": ["smm"],
+        "name": "XMindmap SMM Document",
+        "description": "XMindmap 思维导图（SMM）",
+        "role": "Editor",
+        "mimeType": "application/json"
+      }
+    ]
+  }
+}

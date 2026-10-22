@@ -8,6 +8,9 @@
     "build": "vue-tsc --noEmit && vite build",
     "build:webview": "vue-tsc --noEmit && vite build --config vite.webview.config.ts",
     "build:vscode": "npm --prefix vscode-extension run package",
+    "build:app": "vite build",
+    "app:dev": "tauri dev",
+    "app:build": "tauri build",
     "preview": "vite preview --host 127.0.0.1",
     "typecheck": "vue-tsc --noEmit",
     "test": "vitest run",
@@ -15,6 +18,9 @@
   },
   "dependencies": {
     "@ai-sdk/openai-compatible": "3.0.70",
+    "@tauri-apps/api": "2.12.4",
+    "@tauri-apps/plugin-dialog": "2.8.3",
+    "@tauri-apps/plugin-opener": "2.7.2",
     "ai": "7.0.142",
     "lucide-vue-next": "0.468.0",
     "mdast-util-from-markdown": "2.1.0",
@@ -23,6 +29,7 @@
   },
   "devDependencies": {
     "@playwright/test": "1.64.1",
+    "@tauri-apps/cli": "2.12.4",
     "@types/node": "26.6.5",
     "@vitejs/plugin-vue": "6.0.10",
     "typescript": "7.0.2",

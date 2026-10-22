@@ -68,6 +68,8 @@ export interface MapDocument {
   themeId: ThemeId
   lineStyle: LineStyle
   themeConfig?: ThemeConfig
+  /** Absolute path of the file this document is bound to (desktop only). */
+  filePath?: string
   createdAt: string
   updatedAt: string
 }

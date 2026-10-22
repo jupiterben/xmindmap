@@ -34,6 +34,20 @@ export function createExample(): MapDocument {
   ]))
 }
 
+/** Stable JSON projection so trees built by different code paths compare by content, not key order. */
+function stableJson(value: unknown): string {
+  if (Array.isArray(value)) return `[${value.map(stableJson).join(',')}]`
+  if (isRecord(value)) {
+    return `{${Object.keys(value).sort().map((key) => `${JSON.stringify(key)}:${stableJson(value[key])}`).join(',')}}`
+  }
+  return JSON.stringify(value) ?? 'null'
+}
+
+/** Engine events also fire while a document is only being rendered; equal trees are not edits. */
+export function sameTree(a: MindNode, b: MindNode): boolean {
+  return stableJson(a) === stableJson(b)
+}
+
 export function flattenTree(root: MindNode, visibleOnly = false): OutlineEntry[] {
   const result: OutlineEntry[] = []
   const visit = (node: MindNode, depth: number) => {
@@ -161,6 +175,8 @@ export function loadWorkspace(storage: Pick<Storage, 'getItem'>): Workspace | nu
     ids.add(item.id)
     const doc = parseDocument(item)
     doc.id = item.id
+    // A stale binding is dropped on the first failed write, never trusted as content.
+    if (typeof item.filePath === 'string' && item.filePath && item.filePath.length <= 1024) doc.filePath = item.filePath
     if (typeof item.createdAt === 'string') doc.createdAt = item.createdAt
     if (typeof item.updatedAt === 'string') doc.updatedAt = item.updatedAt
     return doc

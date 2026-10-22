@@ -11,6 +11,7 @@ import type { MapDocument, MindNode, NodeData } from '../domain/types'
 import type { EngineNode, SimpleCommand } from '../engine/types'
 import { getDocumentTheme } from '../domain/themes'
 import { hostRequest, isVsCode } from '../platform/vscode'
+import { isDesktop, saveDesktopDataUrl } from '../platform/desktop'
 import { isNodeIcon, normalizeIcons, replaceIcon } from '../domain/icons'
 import type { NodeIcon } from '../domain/icons'
 import { createNode, flattenTree, MAX_FILE_SIZE, serializeDocument, validateTree } from '../domain/documents'
@@ -81,7 +82,7 @@ export function useMindMap(
       maxHistoryCount: 100,
       minZoomRatio: 20,
       maxZoomRatio: 300,
-      mousewheelAction: 'move',
+      mousewheelAction: 'zoom',
       defaultInsertSecondLevelNodeText: '分支主题',
       defaultInsertBelowSecondLevelNodeText: '新主题',
       enableAutoEnterTextEditWhenKeydown: false,
@@ -304,9 +305,10 @@ export function useMindMap(
   function resetZoom() { engine.value?.view.setScale(1) }
   async function exportImage(type: 'svg' | 'png') {
     capture()
-    const result = await engine.value?.export(type, !isVsCode, doc.value.title)
+    const result = await engine.value?.export(type, !isVsCode && !isDesktop, doc.value.title)
     if (!result) throw new Error('图片导出失败，请重试')
     if (isVsCode) return hostRequest('export', { content: result, filename: `${doc.value.title}.${type}`, encoding: 'dataUrl' })
+    if (isDesktop) return saveDesktopDataUrl(result, `${doc.value.title}.${type}`)
     return true
   }
   return { engine, selection, zoom, canUndo, canRedo, ready, command, insert, select, expansionTarget, applyExpansion, mapContext, applyMapChanges, setIcon, clearIcons, remove, toggle, editText, style, properties, zoomBy, fit, resetZoom, capture, exportImage }

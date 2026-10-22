@@ -4,6 +4,7 @@ import { X } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import { renderMarkdown } from '../domain/markdownView'
 import { hostDataRequest, isVsCode, vscode } from '../platform/vscode'
+import { openExternalUrl } from '../platform/desktop'
 
 const dialog = ref<HTMLDialogElement | null>(null)
 const path = ref('')
@@ -53,7 +54,7 @@ function openHref(event: MouseEvent) {
   const href = anchor.getAttribute('href')
   if (!href) return
   if (isVsCode) vscode?.postMessage({ type: 'openExternal', url: href })
-  else window.open(href, '_blank', 'noopener,noreferrer')
+  else openExternalUrl(href)
 }
 
 defineExpose({ open })

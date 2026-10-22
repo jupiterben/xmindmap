@@ -7,6 +7,7 @@ import { probeModels, saveAiConnection, saveProviderKey } from '../ai/connection
 import { AI_PROVIDERS, endpointLabel, validateAiSettings } from '../domain/ai'
 import type { AiCatalogModel, AiProvider, AiSettingsStatus } from '../domain/ai'
 import { isVsCode, vscode } from '../platform/vscode'
+import { openExternalUrl } from '../platform/desktop'
 
 const props = defineProps<{ settings: AiSettingsStatus; knownModels?: AiCatalogModel[] }>()
 const emit = defineEmits<{
@@ -53,7 +54,7 @@ function openKeyPage(event: MouseEvent) {
   if (!keyLink.value) return
   event.preventDefault()
   if (isVsCode) vscode?.postMessage({ type: 'openExternal', url: keyLink.value })
-  else window.open(keyLink.value, '_blank', 'noopener,noreferrer')
+  else openExternalUrl(keyLink.value)
 }
 function mergeCatalog(baseURL: string, list: string[]) {
   const provider = endpointLabel(baseURL)

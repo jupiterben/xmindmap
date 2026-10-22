@@ -1,5 +1,5 @@
 <script setup lang="ts">
-import { computed, nextTick, onBeforeUnmount, ref, watch } from 'vue'
+import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
   ArrowDownToLine, ArrowUpFromLine, Check, ChevronDown, ChevronRight, Copy, Download,
   FilePlus2, FileText, FolderOpen, GitBranch, Keyboard, ListTree, LoaderCircle, Maximize,
@@ -24,6 +24,10 @@ import { themes } from './domain/themes'
 import { layouts, lineStyles, supportsLineStyle } from './domain/types'
 import type { Layout, NodeData, ThemeId } from './domain/types'
 import { isVsCode, vscode } from './platform/vscode'
+import {
+  fileBaseName, isDesktop, listenOpenFiles, openDesktopDocument, openDesktopImportFile,
+  openExternalUrl, readDesktopTextFile, sameDesktopPath, takePendingOpenFiles,
+} from './platform/desktop'
 import { useAiShortcut } from './composables/useAiShortcut'
 import { useCommandShortcuts } from './composables/useCommandShortcuts'
 import { shortcutLabel } from './domain/shortcuts'
@@ -51,7 +55,7 @@ function openNodeLink(link: string) {
     const url = safeLink(link)
     if (!/^(https?:|mailto:)/i.test(url)) throw new Error('无法打开链接')
     if (isVsCode) vscode?.postMessage({ type: 'openExternal', url })
-    else window.open(url, '_blank', 'noopener,noreferrer')
+    else openExternalUrl(url)
   } catch (reason) {
     notify(reason instanceof Error ? reason.message : '无法打开链接', true)
   }
@@ -134,10 +138,20 @@ function resizeCanvas() {
     if (ready.value) map.fit()
   })
 }
-function newDocument() {
-  map.capture()
+const newDialog = ref<HTMLDialogElement | null>(null)
+function createNewDocument() {
   store.add()
   query.value = ''
+}
+function requestNewDocument() {
+  map.capture()
+  if (!store.hasUnsavedChanges(active.value.id)) { createNewDocument(); return }
+  newDialog.value?.showModal()
+}
+function discardAndNew() { newDialog.value?.close(); createNewDocument() }
+async function saveAndNew() {
+  newDialog.value?.close()
+  if (await save()) createNewDocument()
 }
 function selectDocument(id: string) {
   if (id === active.value.id) return
@@ -163,7 +177,22 @@ function setLineStyle(event: Event) {
   if (style) { active.value.lineStyle = style.value; store.touch() }
 }
 function style(key: keyof NodeData, value: NodeData[keyof NodeData]) { map.style(key, value) }
-function save() { map.capture(); store.flush(); if (!storageError.value && !isVsCode) notify('已保存到本机') }
+async function save(): Promise<boolean> {
+  map.capture()
+  store.flush()
+  if (!isDesktop) {
+    if (!storageError.value && !isVsCode) notify('已保存到本机')
+    return true
+  }
+  try {
+    if (!(await store.saveToFile())) return false
+    notify('已保存到文件')
+    return true
+  } catch (error) {
+    notify(error instanceof Error ? error.message : '文件保存失败', true)
+    return false
+  }
+}
 function focusSearch() {
   leftOpen.value = true
   if (window.innerWidth <= 900) rightOpen.value = false
@@ -193,6 +222,62 @@ async function importFile(event: Event) {
   } catch (error) { notify(error instanceof Error ? error.message : '导入失败', true) }
   finally { busy.value = false; input.value = '' }
 }
+async function chooseImportFile() {
+  if (!isDesktop) { importInput.value?.click(); return }
+  busy.value = true
+  try {
+    const picked = await openDesktopImportFile()
+    if (!picked) return
+    const doc = await readDocumentFile(new File([picked.content], picked.name))
+    map.capture()
+    store.importDocument(doc)
+    query.value = ''
+    notify('导入完成')
+  } catch (error) { notify(error instanceof Error ? error.message : '导入失败', true) }
+  finally { busy.value = false }
+}
+function findOpenDocument(path: string) {
+  return workspace.value.documents.find((doc) => doc.filePath && sameDesktopPath(doc.filePath, path))
+}
+async function openDocumentAt(path: string, content: string, name: string) {
+  const existing = findOpenDocument(path)
+  if (existing) {
+    selectDocument(existing.id)
+    notify(`已切换到 ${name}`)
+    return
+  }
+  const doc = await readDocumentFile(new File([content], name))
+  doc.filePath = path
+  map.capture()
+  store.importDocument(doc)
+  query.value = ''
+  notify(`已打开 ${name}`)
+}
+async function openFile() {
+  if (!isDesktop) return
+  busy.value = true
+  try {
+    const picked = await openDesktopDocument()
+    if (picked) await openDocumentAt(picked.path, picked.content, picked.name)
+  } catch (error) { notify(error instanceof Error ? error.message : '打开文件失败', true) }
+  finally { busy.value = false }
+}
+let stopOpenFileListener: (() => void) | undefined
+async function drainPendingOpenFiles() {
+  const paths = await takePendingOpenFiles()
+  for (const path of paths) {
+    try { await openDocumentAt(path, await readDesktopTextFile(path), fileBaseName(path)) }
+    catch (error) { notify(error instanceof Error ? error.message : `无法打开 ${fileBaseName(path)}`, true) }
+  }
+}
+onMounted(() => {
+  if (!isDesktop) return
+  void (async () => {
+    await drainPendingOpenFiles()
+    stopOpenFileListener = await listenOpenFiles(() => { void drainPendingOpenFiles() })
+  })()
+})
+onBeforeUnmount(() => { stopOpenFileListener?.() })
 async function exportFile(type: 'json' | 'md' | 'png' | 'svg') {
   if (exportMenu.value) exportMenu.value.open = false
   busy.value = true
@@ -257,7 +342,9 @@ onBeforeUnmount(() => {
         <IconButton :icon="Keyboard" label="快捷键" @click="shortcutDialog?.show()" />
         <IconButton :icon="uiTheme === 'dark' ? Sun : Moon" :label="uiTheme === 'dark' ? '切换到浅色' : '切换到深色'" @click="toggleUiTheme" />
         <IconButton :icon="Save" label="保存" @click="save" />
-        <button class="button import-button" :disabled="busy" @click="importInput?.click()"><Upload :size="16" /><span>导入</span></button>
+        <button class="button new-button" :disabled="busy" title="新建导图" @click="requestNewDocument"><FilePlus2 :size="16" /><span>新建</span></button>
+        <button v-if="isDesktop" class="button open-button" :disabled="busy" title="打开 .xmm / .smm / .json 文件" @click="openFile"><FolderOpen :size="16" /><span>打开</span></button>
+        <button class="button import-button" :disabled="busy" @click="chooseImportFile"><Upload :size="16" /><span>导入</span></button>
         <details ref="exportMenu" class="export-menu">
           <summary class="button primary" :aria-disabled="busy"><Download :size="16" /><span>导出</span><ChevronDown :size="14" /></summary>
           <div class="dropdown">
@@ -318,9 +405,9 @@ onBeforeUnmount(() => {
 
     <main v-if="loaded" class="editor-body">
       <aside v-if="leftOpen" class="left-panel">
-        <div class="panel-heading"><span><FolderOpen :size="16" />{{ isVsCode ? '当前文件' : '我的导图' }}</span><IconButton :icon="FilePlus2" label="新建导图" @click="newDocument" /></div>
+        <div class="panel-heading"><span><FolderOpen :size="16" />{{ isVsCode ? '当前文件' : '我的导图' }}</span><IconButton :icon="FilePlus2" label="新建导图" @click="requestNewDocument" /></div>
         <div v-if="!isVsCode" class="document-list" aria-label="本地文档">
-          <button v-for="doc in workspace.documents" :key="doc.id" class="document-item" :class="{ selected: doc.id === active.id }" @click="selectDocument(doc.id)"><FileText :size="16" /><span>{{ doc.title }}</span><span v-if="doc.id === active.id" class="document-active-dot"></span></button>
+          <button v-for="doc in workspace.documents" :key="doc.id" class="document-item" :class="{ selected: doc.id === active.id }" :title="doc.filePath ?? doc.title" @click="selectDocument(doc.id)"><FileText :size="16" /><span>{{ doc.title }}</span><span v-if="doc.id === active.id" class="document-active-dot"></span></button>
         </div>
         <div class="document-tools"><span>{{ isVsCode ? 'VS Code' : `${workspace.documents.length} 个本地文档` }}</span><IconButton :icon="Copy" label="复制当前导图" @click="duplicateDocument" /><IconButton v-if="!isVsCode" :icon="Trash2" label="删除当前导图" @click="confirmDialog?.showModal()" /></div>
         <div class="outline-heading"><span><ListTree :size="16" />大纲</span><div><IconButton :icon="Plus" label="展开全部" @click="map.command('EXPAND_ALL')" /><IconButton :icon="Minus" label="收起全部" @click="map.command('UNEXPAND_ALL')" /></div></div>
@@ -354,12 +441,19 @@ onBeforeUnmount(() => {
     </main>
 
     <div v-else class="empty-state">{{ storageError || '正在读取 VS Code 文件…' }}</div>
-    <footer class="status-bar"><span><span class="status-dot"></span>{{ isVsCode ? 'VS Code 文件' : '本地存储' }}</span><span>{{ active.title }}</span><span class="status-spacer"></span><span>{{ nodeCount }} 个节点</span><span class="footer-brand">XMindmap</span></footer>
+    <footer class="status-bar"><span :title="active.filePath ?? ''"><span class="status-dot"></span>{{ isVsCode ? 'VS Code 文件' : active.filePath ? `文件 · ${fileBaseName(active.filePath)}` : isDesktop ? '本地存储（未关联文件）' : '本地存储' }}</span><span>{{ active.title }}</span><span class="status-spacer"></span><span>{{ nodeCount }} 个节点</span><span class="footer-brand">XMindmap</span></footer>
     <div v-if="message" class="toast" :class="{ error: isError }" :role="isError ? 'alert' : 'status'"><component :is="isError ? X : Check" :size="17" />{{ message }}<button aria-label="关闭提示" @click="message = ''"><X :size="14" /></button></div>
     <div v-if="busy" class="busy-indicator" role="status"><LoaderCircle :size="16" class="spin" />正在处理文件…</div>
 
     <MarkdownPreview ref="markdownPreview" />
     <ShortcutSettings ref="shortcutDialog" :shortcuts="commandShortcuts.shortcuts.value" :mac="aiShortcut.mac" :loading="commandShortcuts.loading.value" :load-error="commandShortcuts.error.value" :save="commandShortcuts.update" :reset="commandShortcuts.reset" />
+    <dialog ref="newDialog" class="confirm-dialog" @click="($event.target === newDialog) && newDialog?.close()">
+      <form method="dialog">
+        <div class="dialog-heading"><h2>保存当前改动？</h2><IconButton :icon="X" label="取消新建" @click="newDialog?.close()" /></div>
+        <p>“{{ active.title }}”有尚未保存到文件的改动，新建导图前是否先保存？</p>
+        <div class="dialog-actions"><button class="button" value="cancel">取消</button><button type="button" class="button" @click="discardAndNew">不保存</button><button type="button" class="button primary" @click="saveAndNew">保存并新建</button></div>
+      </form>
+    </dialog>
     <dialog ref="confirmDialog" class="confirm-dialog" @click="($event.target === confirmDialog) && confirmDialog?.close()">
       <form method="dialog"><div class="dialog-heading"><h2>删除导图？</h2><IconButton :icon="X" label="取消删除" @click="confirmDialog?.close()" /></div><p>“{{ active.title }}” 将从本机移除，此操作无法撤销。</p><div class="dialog-actions"><button class="button" value="cancel">取消</button><button type="button" class="button danger" @click="deleteDocument">确认删除</button></div></form>
     </dialog>

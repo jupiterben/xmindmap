@@ -55,6 +55,44 @@ npm run preview
 
 `dist/` 可部署到静态站点。不同域名或端口的本地存储互相隔离。
 
+## 桌面应用（Tauri）
+
+桌面版使用 [Tauri 2](https://tauri.app/) 封装同一套 Vue 编辑器，文档仍保存在应用内的本机存储中，导入和导出改走系统原生文件对话框，外部链接交给默认浏览器打开。
+
+构建环境：Rust（MSVC 工具链）+ Visual Studio C++ 生成工具 + Node.js 22.12+。首次编译需要联网下载 crates.io 依赖。
+
+```sh
+pnpm install
+pnpm app:dev    # 开发模式，热更新
+pnpm app:build  # 生成发布版
+```
+
+Windows 一键编译并安装：双击仓库根目录的 `build-app.cmd`。脚本会安装依赖、关闭正在运行的 XMindmap、编译发布版并静默运行 NSIS 安装包。
+
+```powershell
+.\build-app.cmd                 # 编译并安装，结束后停留等待按键
+.\build-app.cmd --no-pause      # 终端或自动化，不等待按键
+.\build-app.cmd --no-install    # 只编译，不运行安装包
+.\build-app.cmd --launch        # 安装完成后启动应用
+```
+
+产物：
+
+- 可执行文件：`src-tauri/target/release/xmindmap.exe`
+- 安装包：`src-tauri/target/release/bundle/nsis/XMindmap_0.1.0_x64-setup.exe`
+
+**打开与文件关联**
+
+- 顶栏「打开」按钮选择 `.xmm`、`.smm` 或 `.json`，文件会作为独立文档加入左侧列表，并在状态栏显示关联文件名。
+- 安装 NSIS 安装包后，系统会关联 `.xmm` / `.smm`：双击文件即可用 XMindmap 打开。应用已运行时再次双击会转发到同一个窗口，不会启动第二个实例。
+- 关联文件只在内容被编辑过之后才写回；仅打开不会重写原文件。`Ctrl/Cmd+S` 或保存按钮写回关联文件；未关联文件时先弹出保存对话框（默认 `.xmm`）再建立关联。
+- 顶栏「新建」和左侧文档列表的新建按钮都会创建空白导图。桌面版当前导图还有改动没写进文件时，会先询问「保存并新建 / 不保存 / 取消」；取消或保存对话框被关闭时不会新建。
+- 便携版 `xmindmap.exe` 不写注册表，因此不会注册文件关联；需要双击打开请使用安装包。
+
+`app:build` 只跑 `vite build`：当前 `vue-tsc@3.3.13` 依赖的 `typescript/lib/tsc` 子路径在 `typescript@7.0.2` 的 `exports` 中已不再导出，`pnpm typecheck` / `npm run build` 会因此报 `ERR_PACKAGE_PATH_NOT_EXPORTED`。这是升级 TypeScript 7 后遗留的工具链问题，与桌面封装无关。
+
+Tauri 配置位于 [src-tauri/tauri.conf.json](./src-tauri/tauri.conf.json)，应用图标复用 `vscode-extension/icon.png` 并通过 `npx tauri icon` 生成。
+
 ## 核心功能
 
 | 功能 | 实现范围 |
@@ -69,7 +107,7 @@ npm run preview
 | 结构主题 | 8 种布局、10 套主题 |
 | 连线样式 | 工具栏选择曲线、折线或直线；配色主题也在工具栏，独立于连线保存 |
 | 大纲 | 定位节点、双击改名、折叠展开、搜索包含已折叠的节点 |
-| 文档管理 | 多文档、新建、复制、重命名、删除确认、本地自动保存 |
+| 文档管理 | 多文档、新建（桌面版未保存改动会先提示保存）、复制、重命名、删除确认、本地自动保存 |
 | 文件导入 | JSON、SMM、Markdown |
 | 文件导出 | JSON、Markdown、PNG、SVG |
 

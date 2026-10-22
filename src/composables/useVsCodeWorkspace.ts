@@ -120,6 +120,9 @@ export function useVsCodeWorkspace() {
     importDocument: add,
     select: (_id: string) => {},
     remove: () => {},
+    saveToFile: async () => false,
+    // VS Code owns the document dirty state and its native save prompts.
+    hasUnsavedChanges: (_id?: string) => false,
     rawBackup: () => serializeDocument(active.value),
     setCapture: (callback: () => void) => { capture = callback },
   }

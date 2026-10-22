@@ -2,6 +2,7 @@ import { fromMarkdown } from 'mdast-util-from-markdown'
 import { createDocument, createNode, MAX_FILE_SIZE, parseDocument, safeLink, validateTree } from './documents'
 import type { MapDocument, MindNode } from './types'
 import { hostRequest, isVsCode } from '../platform/vscode'
+import { isDesktop, saveDesktopText } from '../platform/desktop'
 
 interface MdNode { type: string; value?: string; depth?: number; children?: MdNode[] }
 
@@ -220,6 +221,7 @@ export async function readDocumentFile(file: File): Promise<MapDocument> {
 
 export async function downloadText(content: string, filename: string, mime = 'application/json'): Promise<boolean> {
   if (isVsCode) return hostRequest('export', { content, filename, encoding: 'utf8' })
+  if (isDesktop) return saveDesktopText(content, filename)
   const url = URL.createObjectURL(new Blob([content], { type: `${mime};charset=utf-8` }))
   const anchor = document.createElement('a')
   anchor.href = url
