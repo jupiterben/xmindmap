@@ -103,7 +103,7 @@ export function useVsCodeWorkspace() {
   onBeforeUnmount(() => window.removeEventListener('message', onMessage))
 
   function touch() { active.value.updatedAt = new Date().toISOString() }
-  function updateRoot(root: MindNode) { active.value.root = validateTree(root); touch() }
+  function updateRoot(root: MindNode): boolean { active.value.root = validateTree(root); touch(); return true }
   function flush() { saveRequested = true; pump() }
   function add(doc = createDocument()) {
     void hostRequest('create', { content: serializeDocument(doc) }).catch((reason: unknown) => { error.value = String(reason) })

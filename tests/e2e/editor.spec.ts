@@ -1,5 +1,5 @@
 import { test, expect } from '@playwright/test'
-import type { Page } from '@playwright/test'
+import type { Locator, Page } from '@playwright/test'
 
 const runtimeErrors = new WeakMap<Page, string[]>()
 test.beforeEach(({ page }) => {
@@ -93,6 +93,23 @@ test('adds, edits, styles, undoes and deletes nodes', async ({ page }) => {
   await expect(page.locator('.outline-row')).toHaveCount(17)
 })
 
+test('applies and clears built-in node style templates', async ({ page }) => {
+  await openEditor(page)
+  await selectOutline(page, '用户访谈')
+  const themeTemplate = page.getByRole('button', { name: '应用样式模板 跟随主题', exact: true })
+  const accentTemplate = page.getByRole('button', { name: '应用样式模板 强调', exact: true })
+  await expect(themeTemplate).toHaveAttribute('aria-pressed', 'true')
+  await expect(accentTemplate).toHaveAttribute('aria-pressed', 'false')
+  await accentTemplate.click()
+  await expect(accentTemplate).toHaveAttribute('aria-pressed', 'true')
+  await expect(page.getByLabel('自定义填充色')).toHaveValue('#365edc')
+  await expect(page.getByRole('button', { name: '加粗', exact: true })).toHaveClass(/active/)
+  await page.screenshot({ path: 'test-results/node-style-templates-desktop.png', fullPage: true })
+  await themeTemplate.click()
+  await expect(themeTemplate).toHaveAttribute('aria-pressed', 'true')
+  await expect(accentTemplate).toHaveAttribute('aria-pressed', 'false')
+})
+
 test('keeps typing in fields isolated from map shortcuts', async ({ page }) => {
   await openEditor(page)
   await page.getByLabel('节点名称', { exact: true }).fill('新的根主题')
@@ -112,6 +129,48 @@ test('canvas keyboard insertion and inline text editing work', async ({ page }) 
   await page.keyboard.press('Enter')
   await expect(editor).toBeHidden()
   await expect(page.locator('.outline-label').filter({ hasText: '键盘新节点' })).toBeVisible()
+})
+
+test('toolbar insertion opens the inline editor on the new node', async ({ page }) => {
+  await openEditor(page)
+  const rows = page.locator('.outline-row')
+  const editor = page.locator('.smm-node-edit-wrap')
+  await expect(rows).toHaveCount(17)
+  await page.getByRole('button', { name: '子主题', exact: true }).click()
+  await expect(rows).toHaveCount(18)
+  await expect(editor).toBeVisible()
+  await editor.fill('工具栏新增')
+  await page.keyboard.press('Enter')
+  await expect(editor).toBeHidden()
+  await expect(page.locator('.outline-label').filter({ hasText: '工具栏新增' })).toBeVisible()
+  await page.getByRole('button', { name: '同级主题', exact: true }).click()
+  await expect(rows).toHaveCount(19)
+  await expect(editor).toBeVisible()
+  await editor.fill('同级新增')
+  await page.keyboard.press('Enter')
+  await expect(editor).toBeHidden()
+  await expect(page.locator('.outline-label').filter({ hasText: '同级新增' })).toBeVisible()
+  await page.getByRole('button', { name: '插入父主题', exact: true }).click()
+  await expect(rows).toHaveCount(19)
+  await expect(editor).toBeVisible()
+  await editor.fill('父级新增')
+  await page.keyboard.press('Enter')
+  await expect(editor).toBeHidden()
+  await expect(page.locator('.outline-label').filter({ hasText: '父级新增' })).toBeVisible()
+})
+
+test('Insert adds a child node from the canvas and from the outline', async ({ page }) => {
+  await openEditor(page)
+  const rows = page.locator('.outline-row')
+  await expect(rows).toHaveCount(17)
+  await page.getByTestId('mind-map-canvas').locator('text').filter({ hasText: '用户访谈' }).click()
+  await page.keyboard.press('Insert')
+  await expect(rows).toHaveCount(18)
+  // Selecting in the outline must not depend on the mouse resting over the canvas.
+  await selectOutline(page, '用户访谈')
+  await page.keyboard.press('Insert')
+  await expect(rows).toHaveCount(19)
+  await expect(page.locator('.outline-label').filter({ hasText: /^新主题$/ })).toHaveCount(2)
 })
 
 test('persists content, layout and theme through refresh', async ({ page }) => {
@@ -248,6 +307,55 @@ test('drags a node to a different parent and can undo it', async ({ page }) => {
   await expect(design.locator('.outline-count')).toHaveText('4')
   await page.getByRole('button', { name: '撤销', exact: true }).click()
   await expect(discovery.locator('.outline-count')).toHaveText('3')
+})
+
+test('split view shows the same document twice and drags nodes between panes', async ({ page }) => {
+  await openEditor(page)
+  await page.getByRole('button', { name: '分屏', exact: true }).click()
+  const primary = page.getByTestId('mind-map-canvas')
+  const secondary = page.getByTestId('mind-map-canvas-secondary')
+  await expect(secondary.locator('svg').first()).toBeVisible()
+  // Both panes render the active document, not a second file.
+  await expect(secondary.locator('text').filter({ hasText: '产品设计' })).toBeVisible()
+  await expect(page.locator('.secondary-caption')).toContainText('同一文档')
+
+  const dragNode = async (from: Locator, to: Locator) => {
+    const fromBox = (await from.boundingBox())!
+    const toBox = (await to.boundingBox())!
+    await page.mouse.move(fromBox.x + fromBox.width / 2, fromBox.y + fromBox.height / 2)
+    await page.mouse.down()
+    await page.mouse.move(toBox.x + toBox.width / 2, toBox.y + toBox.height / 2, { steps: 25 })
+    await page.mouse.up()
+  }
+  const discovery = page.locator('.outline-row').filter({ has: page.getByRole('button', { name: '发现问题', exact: true }) })
+  const design = page.locator('.outline-row').filter({ has: page.getByRole('button', { name: '设计方案', exact: true }) })
+
+  // Primary → secondary: drop on a node seen in the other viewport.
+  await dragNode(primary.locator('text').filter({ hasText: '用户访谈' }), secondary.locator('text').filter({ hasText: '设计方案' }))
+  await expect(discovery.locator('.outline-count')).toHaveText('2')
+  await expect(design.locator('.outline-count')).toHaveText('4')
+  await expect(secondary.locator('text').filter({ hasText: '用户访谈' })).toBeVisible()
+
+  // Secondary → primary.
+  await dragNode(secondary.locator('text').filter({ hasText: '用户访谈' }), primary.locator('text').filter({ hasText: '发现问题' }))
+  await expect(discovery.locator('.outline-count')).toHaveText('3')
+  await expect(design.locator('.outline-count')).toHaveText('3')
+  await page.screenshot({ path: 'test-results/split-view-desktop.png', fullPage: true })
+
+  // Undo runs on the shared history and updates both viewports.
+  await page.getByRole('button', { name: '撤销', exact: true }).click()
+  await expect(discovery.locator('.outline-count')).toHaveText('2')
+  await expect(design.locator('.outline-count')).toHaveText('4')
+  await expect(secondary.locator('text').filter({ hasText: '用户访谈' })).toBeVisible()
+
+  // Editing in the second viewport updates the first one too.
+  await secondary.locator('text').filter({ hasText: '场景与痛点' }).click()
+  await page.getByRole('button', { name: '子主题', exact: true }).click()
+  await expect(page.locator('.outline-row')).toHaveCount(18)
+  await expect(primary.locator('text').filter({ hasText: '新主题' })).toBeVisible()
+
+  await page.getByRole('button', { name: '关闭分屏', exact: true }).click()
+  await expect(secondary).toBeHidden()
 })
 
 test('adds a local image, retains it after reload and removes it', async ({ page }) => {

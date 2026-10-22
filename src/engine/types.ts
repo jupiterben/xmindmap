@@ -2,11 +2,17 @@ import type { Layout, MindNode, NodeData, ThemeConfig } from '../domain/types'
 import type { NodeIcon } from '../domain/icons'
 
 export interface EngineNode {
+  uid: string
   isRoot: boolean
   children: EngineNode[]
+  group?: { addClass(name: string): void; removeClass(name: string): void }
   style: { merge<K extends keyof NodeData>(key: K): NodeData[K] }
   getData(): NodeData
   getData<K extends keyof NodeData>(key: K): NodeData[K]
+  /** True when `node` is a descendant of this node. */
+  isAncestor(node: EngineNode): boolean
+  /** Bounding box in window coordinates, or null when the node is not rendered. */
+  getRect(): { x: number; y: number; width: number; height: number } | null
   active(): void
   setText(text: string): void
   setNote(note: string): void
@@ -15,6 +21,8 @@ export interface EngineNode {
   setIcon(icons: NodeIcon[]): void
   setImage(data: { url: string; title: string; width: number; height: number }): void
   setStyle<K extends keyof NodeData>(property: K, value: NodeData[K]): void
+  /** Applies a batch of styles in a single history entry. */
+  setStyles(style: Partial<NodeData>): void
 }
 
 export interface EngineEvents {
@@ -37,6 +45,7 @@ export interface EngineOptions {
   minZoomRatio: number
   maxZoomRatio: number
   mousewheelAction: 'move' | 'zoom'
+  enableShortcutOnlyWhenMouseInSvg: boolean
   defaultInsertSecondLevelNodeText: string
   defaultInsertBelowSecondLevelNodeText: string
   enableAutoEnterTextEditWhenKeydown: boolean

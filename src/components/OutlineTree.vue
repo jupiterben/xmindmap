@@ -13,6 +13,12 @@ const entries = computed(() => {
   return flattenTree(props.root, !query).filter(({ node }) => !query || node.data.text.toLowerCase().includes(query))
 })
 function edit(node: MindNode) { editing.value = node.data.uid; text.value = node.data.text }
+// Canvas shortcuts (Tab / Insert / Enter) only fire while the page owns focus. Without
+// this, clicking a row leaves the button focused and adding a node from the outline does
+// nothing until the canvas is clicked.
+function releaseFocus(event: MouseEvent) {
+  if (event.target instanceof Element) event.target.closest('button')?.blur()
+}
 function finish() {
   if (!editing.value) return
   emit('rename', editing.value, text.value)
@@ -21,7 +27,7 @@ function finish() {
 </script>
 
 <template>
-  <div class="outline-tree" aria-label="导图大纲">
+  <div class="outline-tree" aria-label="导图大纲" @click="releaseFocus">
     <div v-for="{ node, depth } in entries" :key="node.data.uid" class="outline-row" :class="{ selected: selectedUid === node.data.uid }" :style="{ paddingLeft: `${12 + Math.min(depth, 8) * 15}px` }">
       <button v-if="node.children.length" class="outline-toggle" :aria-label="`${node.data.expand === false ? '展开' : '收起'} ${node.data.text}`" :disabled="depth === 0" @click="emit('toggle', node.data.uid)">
         <component :is="node.data.expand === false ? ChevronRight : ChevronDown" :size="13" />

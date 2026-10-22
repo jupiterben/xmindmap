@@ -118,13 +118,15 @@ export function useWorkspace() {
     dirtyFiles.add(active.value.id)
     markUnsaved(active.value.id)
   }
-  function updateRoot(root: MindNode) {
+  /** Returns true when the tree actually changed, so split panes only sync real edits. */
+  function updateRoot(root: MindNode): boolean {
     // Undo events share the engine's live tree; keep renderer caches out of saved data.
     const next = validateTree(root)
     // Rendering and history setup also emit data_change; identical trees are not edits.
-    if (sameTree(next, active.value.root)) return
+    if (sameTree(next, active.value.root)) return false
     active.value.root = next
     touch()
+    return true
   }
   function add(doc = createDocument()) {
     workspace.value.documents.unshift(doc)

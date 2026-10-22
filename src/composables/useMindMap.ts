@@ -14,7 +14,9 @@ import { hostRequest, isVsCode } from '../platform/vscode'
 import { isDesktop, saveDesktopDataUrl } from '../platform/desktop'
 import { isNodeIcon, normalizeIcons, replaceIcon } from '../domain/icons'
 import type { NodeIcon } from '../domain/icons'
-import { createNode, flattenTree, MAX_FILE_SIZE, serializeDocument, validateTree } from '../domain/documents'
+import { createNode, flattenTree, MAX_FILE_SIZE, sameTree, serializeDocument, validateTree } from '../domain/documents'
+import { nodeStyleKeys } from '../domain/nodeStyles'
+import type { NodeStyleValues, SelectedNodeData } from '../domain/nodeStyles'
 import { buildMapOutline, uniqueTopics } from '../domain/ai'
 import type { AiExpansionTarget, AiMapChange, AiMapContext } from '../domain/ai'
 
@@ -28,7 +30,7 @@ export function useMindMap(
   openLink: (link: string) => void,
 ) {
   const engine = shallowRef<MindMap | null>(null)
-  const selection = ref<NodeData[]>([])
+  const selection = ref<SelectedNodeData[]>([])
   const zoom = ref(100)
   const canUndo = ref(false)
   const canRedo = ref(false)
@@ -37,17 +39,40 @@ export function useMindMap(
   let resizeFrame = 0
   let disposed = false
   let engineDocumentId = ''
+  // Selection to restore after this pane receives a change from the other split pane.
+  let pendingActiveUids: string[] | null = null
+  // Last tree applied from the peer, used to ignore its delayed data_change echo.
+  let lastExternalRoot: MindNode | null = null
+  // Peer change received while this engine was not ready or was dragging.
+  let pendingExternalRoot: MindNode | null = null
+  function isSameExternal(root: MindNode, expected: MindNode): boolean {
+    try { return sameTree(validateTree(root), expected) } catch { return false }
+  }
 
   function refreshSelection(nodes: EngineNode[]) {
-    selection.value = nodes.map((node) => ({
-      ...node.getData(),
-      fontSize: node.style.merge('fontSize'),
-      fontWeight: node.style.merge('fontWeight'),
-      fontStyle: node.style.merge('fontStyle'),
-      fillColor: node.style.merge('fillColor'),
-      color: node.style.merge('color'),
-      shape: node.style.merge('shape'),
-    }))
+    selection.value = nodes.map((node) => {
+      const data = node.getData()
+      // Keep the node's own style overrides separate from the merged values the
+      // theme contributes; the inspector needs both to show and reset templates.
+      const overrides: NodeStyleValues = {}
+      for (const key of nodeStyleKeys) {
+        const value = data[key]
+        if (value !== undefined) (overrides as Record<string, unknown>)[key] = value
+      }
+      return {
+        ...data,
+        fontSize: node.style.merge('fontSize'),
+        fontWeight: node.style.merge('fontWeight'),
+        fontStyle: node.style.merge('fontStyle'),
+        fillColor: node.style.merge('fillColor'),
+        color: node.style.merge('color'),
+        shape: node.style.merge('shape'),
+        borderColor: node.style.merge('borderColor'),
+        borderWidth: node.style.merge('borderWidth'),
+        borderRadius: node.style.merge('borderRadius'),
+        styleOverrides: overrides,
+      }
+    })
   }
   function capture() {
     const map = engine.value
@@ -67,6 +92,9 @@ export function useMindMap(
 
   watch([container, () => doc.value.id], ([element]) => {
     destroy()
+    pendingActiveUids = null
+    lastExternalRoot = null
+    pendingExternalRoot = null
     if (!element || disposed) return
     selection.value = []
     canUndo.value = false
@@ -83,6 +111,9 @@ export function useMindMap(
       minZoomRatio: 20,
       maxZoomRatio: 300,
       mousewheelAction: 'zoom',
+      // The page hosts a single map; tie shortcuts to focus instead of mouse position so
+      // Insert/Tab still work after selecting a node from the outline or toolbar.
+      enableShortcutOnlyWhenMouseInSvg: false,
       defaultInsertSecondLevelNodeText: '分支主题',
       defaultInsertBelowSecondLevelNodeText: '新主题',
       enableAutoEnterTextEditWhenKeydown: false,
@@ -109,7 +140,13 @@ export function useMindMap(
     map.on('node_active', (_node, nodes) => { if (isCurrent()) refreshSelection(nodes) })
     map.on('data_change', (root) => {
       if (!isCurrent()) return
-      if (root) update(root)
+      // updateData records history asynchronously; ignore that echo so a stale
+      // mirrored tree can never overwrite a newer edit in this pane.
+      if (root && lastExternalRoot && isSameExternal(root, lastExternalRoot)) {
+        lastExternalRoot = null
+      } else if (root) {
+        update(root)
+      }
       refreshSelection(map.renderer.activeNodeList)
     })
     map.on('back_forward', (index, length) => {
@@ -125,7 +162,22 @@ export function useMindMap(
         map.view.fit()
         map.renderer.root?.active()
       }
+      if (pendingActiveUids) {
+        const uids = pendingActiveUids
+        pendingActiveUids = null
+        const nodes = uids.flatMap((uid) => {
+          const node = map.renderer.findNodeByUid(uid)
+          return node ? [node] : []
+        })
+        if (nodes.length) map.renderer.activeMultiNode(nodes)
+      }
       refreshSelection(map.renderer.activeNodeList)
+      // A change arrived while this pane was still loading or dragging.
+      if (pendingExternalRoot && !map.drag?.isDragging) {
+        const root = pendingExternalRoot
+        pendingExternalRoot = null
+        applyExternal(root)
+      }
     })
     observer = new ResizeObserver(() => {
       cancelAnimationFrame(resizeFrame)
@@ -150,7 +202,8 @@ export function useMindMap(
     if (!map) return
     const nodes = map.renderer.activeNodeList.length ? map.renderer.activeNodeList : map.renderer.root ? [map.renderer.root] : []
     const cmd = kind === 'child' ? 'INSERT_CHILD_NODE' : kind === 'parent' ? 'INSERT_PARENT_NODE' : 'INSERT_NODE'
-    map.execCommand(cmd, false, nodes)
+    // Open the inline text editor on the new node, matching the keyboard shortcuts.
+    map.execCommand(cmd, true, nodes)
   }
   function select(uid: string) { engine.value?.renderer.goTargetNode(uid) }
   function expansionTarget(previous?: AiExpansionTarget): AiExpansionTarget {
@@ -289,8 +342,19 @@ export function useMindMap(
     engine.value?.renderer.activeNodeList.forEach((node) => node.setStyle(key, value))
     if (engine.value) refreshSelection(engine.value.renderer.activeNodeList)
   }
+  function applyStyles(styles: Partial<NodeData>) {
+    const nodes = [...(engine.value?.renderer.activeNodeList ?? [])]
+    if (!nodes.length) return
+    nodes.forEach((node) => node.setStyles(styles))
+    refreshSelection(nodes)
+  }
   function properties(values: { text: string; note: string; hyperlink: string; tags: string[] }) {
-    const node = engine.value?.renderer.activeNodeList[0]
+    const map = engine.value
+    if (!map) return
+    // A newly inserted node opens the inline editor. Close it first so its text
+    // commit cannot land after (and overwrite) the values from this form.
+    map.renderer.textEdit.hideEditTextBox()
+    const node = map.renderer.activeNodeList[0]
     if (!node) return
     if (values.text.trim()) node.setText(values.text.trim())
     node.setNote(values.note)
@@ -303,6 +367,69 @@ export function useMindMap(
   }
   function fit() { engine.value?.view.fit() }
   function resetZoom() { engine.value?.view.setScale(1) }
+
+  // Split view. Both panes render the same document; the second pane is another
+  // viewport onto the same tree. It only needs hit testing for drop targets,
+  // while all mutations go through this engine's normal commands.
+  function findNodeAt(clientX: number, clientY: number): EngineNode | null {
+    const root = engine.value?.renderer.root
+    if (!root) return null
+    let found: EngineNode | null = null
+    // Children are laid out beside their parent, not inside its box, so every
+    // rendered node has to be tested; the deepest hit wins.
+    const visit = (node: EngineNode) => {
+      const rect = node.getRect()
+      if (rect && clientX >= rect.x && clientX <= rect.x + rect.width && clientY >= rect.y && clientY <= rect.y + rect.height) {
+        found = node
+      }
+      node.children.forEach(visit)
+    }
+    visit(root)
+    return found
+  }
+  function targetUidAt(clientX: number, clientY: number): string {
+    if (!ready.value) return ''
+    return findNodeAt(clientX, clientY)?.getData('uid') ?? ''
+  }
+  let highlighted: EngineNode | null = null
+  function highlight(node: EngineNode | null) {
+    if (highlighted === node) return
+    highlighted?.group?.removeClass('split-drop-target')
+    highlighted = node
+    highlighted?.group?.addClass('split-drop-target')
+  }
+  function dropHover(clientX: number, clientY: number) {
+    if (!ready.value) return
+    highlight(findNodeAt(clientX, clientY))
+  }
+  function clearDropHover() { highlight(null) }
+  /**
+   * Apply a change made in the other split pane. `updateData` keeps this pane's
+   * pan/zoom and records the change in its history; the active nodes are
+   * restored by uid after the render because document data carries no selection.
+   */
+  function applyExternal(root: MindNode) {
+    const map = engine.value
+    if (!map) return
+    // Never replace the tree under an in-flight drag or before the first render;
+    // the next render end applies the latest queued tree.
+    if (!ready.value || map.drag?.isDragging) {
+      pendingExternalRoot = root
+      return
+    }
+    pendingExternalRoot = null
+    pendingActiveUids = map.renderer.activeNodeList.map((node) => node.getData('uid'))
+    lastExternalRoot = root
+    map.renderer.clearActiveNodeList()
+    map.updateData(root)
+  }
+  function setShortcutsEnabled(enabled: boolean) {
+    const keyCommand = engine.value?.keyCommand
+    if (!keyCommand) return
+    if (enabled) keyCommand.recovery()
+    else keyCommand.pause()
+  }
+
   async function exportImage(type: 'svg' | 'png') {
     capture()
     const result = await engine.value?.export(type, !isVsCode && !isDesktop, doc.value.title)
@@ -311,5 +438,9 @@ export function useMindMap(
     if (isDesktop) return saveDesktopDataUrl(result, `${doc.value.title}.${type}`)
     return true
   }
-  return { engine, selection, zoom, canUndo, canRedo, ready, command, insert, select, expansionTarget, applyExpansion, mapContext, applyMapChanges, setIcon, clearIcons, remove, toggle, editText, style, properties, zoomBy, fit, resetZoom, capture, exportImage }
+  return {
+    engine, selection, zoom, canUndo, canRedo, ready, command, insert, select, expansionTarget, applyExpansion,
+    mapContext, applyMapChanges, setIcon, clearIcons, remove, toggle, editText, style, applyStyles, properties, zoomBy, fit,
+    resetZoom, capture, exportImage, targetUidAt, dropHover, clearDropHover, applyExternal, setShortcutsEnabled,
+  }
 }

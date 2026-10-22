@@ -4,11 +4,15 @@ import { Bold, Italic, ImagePlus, Trash2 } from 'lucide-vue-next'
 import IconButton from './IconButton.vue'
 import { safeLink } from '../domain/documents'
 import { normalizeRelativeMarkdownPath } from '../domain/links'
+import { nodeStyleTemplates } from '../domain/nodeStyles'
+import type { NodeStyleTemplate, NodeStyleValues, SelectedNodeData } from '../domain/nodeStyles'
+import type { MapTheme } from '../domain/themes'
 import type { NodeData, NodeShape } from '../domain/types'
 
-const props = defineProps<{ nodes: NodeData[] }>()
+const props = defineProps<{ nodes: SelectedNodeData[]; theme: MapTheme }>()
 const emit = defineEmits<{
   style: [key: keyof NodeData, value: NodeData[keyof NodeData]]
+  styleTemplate: [styles: NodeStyleValues]
   properties: [values: { text: string; note: string; hyperlink: string; tags: string[] }]
   image: [file: File]
   removeImage: []
@@ -19,18 +23,51 @@ const note = ref('')
 const hyperlink = ref('')
 const tags = ref('')
 const error = ref('')
+const selectedUid = ref('')
+// Set while the user is typing in the form, so canvas re-renders (which replace
+// the selection array on every render) cannot reset the fields mid-edit.
+const dirty = ref(false)
 const imageInput = ref<HTMLInputElement | null>(null)
 const markdownPath = computed(() => {
   try { return normalizeRelativeMarkdownPath(hyperlink.value) } catch { return '' }
 })
 const colors = ['#365edc', '#257763', '#a9456c', '#d0a333', '#3e4653', '#ffffff']
+const templates = computed(() => nodeStyleTemplates(props.theme))
+
+function isTemplateActive(template: NodeStyleTemplate) {
+  if (!props.nodes.length) return false
+  return props.nodes.every((node) => {
+    const overrides = node.styleOverrides ?? {}
+    if (template.reset) return Object.keys(overrides).length === 0
+    return Object.entries(template.style).every(([key, value]) => (overrides as Record<string, unknown>)[key] === value)
+  })
+}
+function sampleStyle(template: NodeStyleTemplate) {
+  const { preview } = template
+  return {
+    backgroundColor: template.reset ? 'transparent' : preview.fillColor,
+    color: preview.color,
+    // The reset template is an action, not a look: a hollow dashed box says
+    // "inherit" better than the light theme colour it would otherwise match.
+    border: template.reset ? `1px dashed ${preview.borderColor}` : `1px solid ${preview.borderWidth > 0 ? preview.borderColor : 'transparent'}`,
+    borderRadius: preview.shape === 'ellipse' ? '999px' : preview.shape === 'rectangle' ? '2px' : '5px',
+    fontWeight: preview.fontWeight === 'bold' ? '700' : '500',
+    fontStyle: preview.fontStyle,
+  }
+}
 watch(() => props.nodes, (nodes) => {
   const node = nodes[0]
+  const uid = node?.uid ?? ''
+  if (uid !== selectedUid.value) {
+    selectedUid.value = uid
+    dirty.value = false
+  }
+  error.value = ''
+  if (dirty.value && uid) return
   text.value = node?.text ?? ''
   note.value = node?.note ?? ''
   hyperlink.value = node?.hyperlink ?? ''
   tags.value = node?.tag?.join(', ') ?? ''
-  error.value = ''
 }, { immediate: true })
 function apply() {
   try {
@@ -38,6 +75,7 @@ function apply() {
     const link = safeLink(hyperlink.value)
     emit('properties', { text: text.value, note: note.value, hyperlink: link, tags: tags.value.split(/[,，]/).map((tag) => tag.trim()).filter(Boolean).slice(0, 20) })
     error.value = ''
+    dirty.value = false
   } catch (reason) { error.value = reason instanceof Error ? reason.message : '保存失败' }
 }
 function chooseImage(event: Event) {
@@ -51,6 +89,15 @@ function chooseImage(event: Event) {
 <template>
   <div v-if="!nodes.length" class="empty-state">未选中节点</div>
   <template v-else>
+    <div class="inspector-section">
+      <div class="section-label">样式模板 <span>{{ nodes.length > 1 ? `应用到 ${nodes.length} 项` : '一键套用' }}</span></div>
+      <div class="style-template-grid" role="group" aria-label="节点样式模板">
+        <button v-for="template in templates" :key="template.id" type="button" class="style-template" :class="{ chosen: isTemplateActive(template) }" :aria-pressed="isTemplateActive(template)" :aria-label="`应用样式模板 ${template.label}`" :title="template.label" @click="emit('styleTemplate', template.style)">
+          <span class="style-template-sample" :style="sampleStyle(template)"><span>Aa</span></span>
+          <span class="style-template-label">{{ template.label }}</span>
+        </button>
+      </div>
+    </div>
     <div class="inspector-section">
       <div class="section-label">节点样式 <span>{{ nodes.length > 1 ? `已选 ${nodes.length} 项` : '当前节点' }}</span></div>
       <div class="format-row">
@@ -76,11 +123,11 @@ function chooseImage(event: Event) {
     </div>
     <form v-if="nodes.length === 1" class="inspector-section" @submit.prevent="apply">
       <div class="section-label">节点内容</div>
-      <label class="field-label">名称<textarea v-model="text" aria-label="节点名称" rows="2" maxlength="20000"></textarea></label>
-      <label class="field-label">备注<textarea v-model="note" aria-label="节点备注" rows="3" maxlength="20000"></textarea></label>
-      <label class="field-label">链接<input v-model="hyperlink" aria-label="节点链接" type="text" placeholder="https:// 或 docs/note.md" /></label>
+      <label class="field-label">名称<textarea v-model="text" aria-label="节点名称" rows="2" maxlength="20000" @input="dirty = true"></textarea></label>
+      <label class="field-label">备注<textarea v-model="note" aria-label="节点备注" rows="3" maxlength="20000" @input="dirty = true"></textarea></label>
+      <label class="field-label">链接<input v-model="hyperlink" aria-label="节点链接" type="text" placeholder="https:// 或 docs/note.md" @input="dirty = true" /></label>
       <button v-if="markdownPath" type="button" class="text-button" @click="emit('preview', markdownPath)">预览 Markdown</button>
-      <label class="field-label">标签<input v-model="tags" aria-label="节点标签" type="text" placeholder="设计, 待办" /></label>
+      <label class="field-label">标签<input v-model="tags" aria-label="节点标签" type="text" placeholder="设计, 待办" @input="dirty = true" /></label>
       <p v-if="error" role="alert" class="field-error">{{ error }}</p>
       <button class="button apply-button" type="submit">应用修改</button>
       <div class="image-actions">

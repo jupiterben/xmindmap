@@ -143,18 +143,21 @@ function syncClearance() {
   const el = panel.value
   const parent = el?.offsetParent instanceof HTMLElement ? el.offsetParent : el?.parentElement
   if (!(parent instanceof HTMLElement) || !el) return
-  const controls = parent.querySelector(':scope > .canvas-controls')
-  if (!(controls instanceof HTMLElement) || dragging.value || el.offsetHeight === 0) {
+  // Split view renders one controls block per pane; clear every one the panel covers.
+  const controls = [...parent.querySelectorAll<HTMLElement>('.canvas-controls')]
+  if (!controls.length || dragging.value || el.offsetHeight === 0) {
     if (!dragging.value) parent.style.removeProperty('--ai-dock-clearance')
     return
   }
   const parentRect = parent.getBoundingClientRect()
   const panelRect = el.getBoundingClientRect()
-  const right = Number.parseFloat(getComputedStyle(controls).right) || 24
   const rest = cssPx(parent, '--ai-controls-rest', 24)
-  const left = parentRect.right - right - controls.offsetWidth
-  const top = parentRect.bottom - rest - controls.offsetHeight
-  const hit = panelRect.left < left + controls.offsetWidth && panelRect.right > left && panelRect.top < top + controls.offsetHeight && panelRect.bottom > top
+  const hit = controls.some((control) => {
+    const right = Number.parseFloat(getComputedStyle(control).right) || 24
+    const left = parentRect.right - right - control.offsetWidth
+    const top = parentRect.bottom - rest - control.offsetHeight
+    return panelRect.left < left + control.offsetWidth && panelRect.right > left && panelRect.top < top + control.offsetHeight && panelRect.bottom > top
+  })
   if (!hit) {
     parent.style.removeProperty('--ai-dock-clearance')
     return

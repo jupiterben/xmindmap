@@ -1,7 +1,7 @@
 <script setup lang="ts">
 import { computed, nextTick, onBeforeUnmount, onMounted, ref, watch } from 'vue'
 import {
-  ArrowDownToLine, ArrowUpFromLine, Check, ChevronDown, ChevronRight, Copy, Download,
+  ArrowDownToLine, ArrowUpFromLine, Check, ChevronDown, ChevronRight, Columns2, Copy, Download,
   FilePlus2, FileText, FolderOpen, GitBranch, Keyboard, ListTree, LoaderCircle, Maximize,
   Minus, Moon, Network, PanelLeftClose, PanelLeftOpen, PanelRightClose, PanelRightOpen,
   Plus, Redo2, Save, Search, Settings2, Sparkles, Sun, Trash2, Undo2, Upload, X,
@@ -22,7 +22,10 @@ import { isRelativeMarkdownPath } from './domain/links'
 import { downloadText, exportMarkdown, readDocumentFile } from './domain/files'
 import { themes } from './domain/themes'
 import { layouts, lineStyles, supportsLineStyle } from './domain/types'
-import type { Layout, NodeData, ThemeId } from './domain/types'
+import type { Layout, MindNode, NodeData, ThemeId } from './domain/types'
+import type { NodeIcon } from './domain/icons'
+import { registerSplitPane } from './engine/splitPanes'
+import type { SplitPaneHandle } from './engine/splitPanes'
 import { isVsCode, vscode } from './platform/vscode'
 import {
   fileBaseName, isDesktop, listenOpenFiles, openDesktopDocument, openDesktopImportFile,
@@ -60,9 +63,62 @@ function openNodeLink(link: string) {
     notify(reason instanceof Error ? reason.message : '无法打开链接', true)
   }
 }
-const map = useMindMap(canvas, active, store.updateRoot, (text) => notify(text, true), openNodeLink)
+// Split view shows the same document twice: two engines, two independent
+// viewports, one tree. Every change is synced to the other pane.
+let syncToSecondary: (root: MindNode) => void = () => {}
+let syncToPrimary: (root: MindNode) => void = () => {}
+const primaryMap = useMindMap(canvas, active, (root) => { if (store.updateRoot(root)) syncToSecondary(root) }, (text) => notify(text, true), openNodeLink)
+const primarySelection = primaryMap.selection
+const primaryZoom = primaryMap.zoom
+const primaryReady = primaryMap.ready
+
+const splitOpen = ref(false)
+const splitRatio = ref(0.5)
+const focusedPane = ref<'primary' | 'secondary'>('primary')
+const secondaryCanvas = ref<HTMLElement | null>(null)
+const secondaryMap = useMindMap(secondaryCanvas, active, (root) => { if (store.updateRoot(root)) syncToPrimary(root) }, (text) => notify(text, true), openNodeLink)
+const secondaryZoom = secondaryMap.zoom
+const secondaryReady = secondaryMap.ready
+syncToSecondary = secondaryMap.applyExternal
+syncToPrimary = primaryMap.applyExternal
+
+const focusedMap = computed(() => splitOpen.value && focusedPane.value === 'secondary' ? secondaryMap : primaryMap)
+const selection = computed(() => focusedMap.value.selection.value)
+const ready = computed(() => focusedMap.value.ready.value)
+// The primary engine keeps the shared undo history: edits from either pane are
+// mirrored into it, so undo/redo always step the whole document.
+const canUndo = primaryMap.canUndo
+const canRedo = primaryMap.canRedo
+// The main toolbar and panels act on the focused pane; the document itself is
+// shared by both panes.
+const map = {
+  engine: computed(() => focusedMap.value.engine.value),
+  capture() { primaryMap.capture(); secondaryMap.capture() },
+  command(value: 'BACK' | 'FORWARD' | 'REMOVE_NODE' | 'EXPAND_ALL' | 'UNEXPAND_ALL' | 'UP_NODE' | 'DOWN_NODE' | 'MOVE_UP_ONE_LEVEL') {
+    if (value === 'BACK' || value === 'FORWARD') primaryMap.command(value)
+    else focusedMap.value.command(value)
+  },
+  insert(kind: 'child' | 'sibling' | 'parent') { focusedMap.value.insert(kind) },
+  select(uid: string) { focusedMap.value.select(uid) },
+  toggle(uid: string) { focusedMap.value.toggle(uid) },
+  editText(uid: string, text: string) { focusedMap.value.editText(uid, text) },
+  remove(uid: string) { focusedMap.value.remove(uid) },
+  setIcon(icon: NodeIcon) { focusedMap.value.setIcon(icon) },
+  clearIcons() { focusedMap.value.clearIcons() },
+  style<K extends keyof NodeData>(key: K, value: NodeData[K]) { focusedMap.value.style(key, value) },
+  applyStyles(styles: Partial<NodeData>) { focusedMap.value.applyStyles(styles) },
+  properties(values: { text: string; note: string; hyperlink: string; tags: string[] }) { focusedMap.value.properties(values) },
+  zoomBy(direction: 1 | -1) { focusedMap.value.zoomBy(direction) },
+  resetZoom() { focusedMap.value.resetZoom() },
+  fit() { focusedMap.value.fit() },
+  expansionTarget(previous?: AiExpansionTarget) { return focusedMap.value.expansionTarget(previous) },
+  applyExpansion(target: AiExpansionTarget, topics: string[]) { return focusedMap.value.applyExpansion(target, topics) },
+  mapContext() { return focusedMap.value.mapContext() },
+  applyMapChanges(context: AiMapContext, changes: AiMapChange[]) { focusedMap.value.applyMapChanges(context, changes) },
+  exportImage(type: 'svg' | 'png') { return focusedMap.value.exportImage(type) },
+}
 store.setCapture(map.capture)
-const { selection, ready, zoom, canUndo, canRedo } = map
+const primarySelectedUid = computed(() => primarySelection.value[0]?.uid)
 const leftOpen = ref(window.innerWidth > 900)
 const rightOpen = ref(false)
 const query = ref('')
@@ -72,7 +128,6 @@ const exportMenu = ref<HTMLDetailsElement | null>(null)
 const busy = ref(false)
 const confirmDialog = ref<HTMLDialogElement | null>(null)
 const nodeCount = computed(() => flattenTree(active.value.root).length)
-const selectedUid = computed(() => selection.value[0]?.uid)
 const isRootSelected = computed(() => selection.value.some((node) => node.uid === active.value.root.data.uid))
 const searchResults = computed(() => query.value.trim() ? flattenTree(active.value.root).filter(({ node }) => node.data.text.toLowerCase().includes(query.value.trim().toLowerCase())) : [])
 const searchIndex = ref(0)
@@ -138,6 +193,82 @@ function resizeCanvas() {
     if (ready.value) map.fit()
   })
 }
+function focusPane(pane: 'primary' | 'secondary') {
+  if (pane === 'secondary' && !splitOpen.value) return
+  focusedPane.value = pane
+}
+function selectInPrimary(uid: string) {
+  focusPane('primary')
+  primaryMap.select(uid)
+}
+function closeSplit() {
+  splitOpen.value = false
+  focusedPane.value = 'primary'
+  aiTarget.value = null
+  aiMap.value = null
+  void nextTick(() => {
+    primaryMap.engine.value?.resize()
+    if (primaryMap.ready.value) primaryMap.fit()
+  })
+}
+function toggleSplit() {
+  if (isVsCode) return
+  if (splitOpen.value) { closeSplit(); return }
+  splitOpen.value = true
+  focusedPane.value = 'secondary'
+  aiTarget.value = null
+  aiMap.value = null
+  void nextTick(() => {
+    primaryMap.engine.value?.resize()
+    secondaryMap.engine.value?.resize()
+    // The panes are half as wide now; refit so both start with a usable view.
+    if (primaryMap.ready.value) primaryMap.fit()
+    secondaryMap.fit()
+  })
+}
+const primaryPaneStyle = computed(() => splitOpen.value ? { flex: `0 0 calc((100% - 6px) * ${splitRatio.value})` } : undefined)
+function startSplitResize(event: PointerEvent) {
+  if (!splitOpen.value) return
+  const stack = (event.currentTarget as HTMLElement).parentElement
+  if (!stack) return
+  const rect = stack.getBoundingClientRect()
+  const vertical = window.matchMedia('(max-width: 900px)').matches
+  const move = (moveEvent: PointerEvent) => {
+    const ratio = vertical ? (moveEvent.clientY - rect.top) / rect.height : (moveEvent.clientX - rect.left) / rect.width
+    splitRatio.value = Math.min(0.8, Math.max(0.2, ratio))
+  }
+  const finish = () => {
+    window.removeEventListener('pointermove', move)
+    window.removeEventListener('pointerup', finish)
+    window.removeEventListener('pointercancel', finish)
+  }
+  window.addEventListener('pointermove', move)
+  window.addEventListener('pointerup', finish)
+  window.addEventListener('pointercancel', finish)
+  event.preventDefault()
+}
+function paneHandle(element: HTMLElement, target: ReturnType<typeof useMindMap>): SplitPaneHandle {
+  return {
+    element,
+    targetUidAt: (x, y) => target.targetUidAt(x, y),
+    hover: (x, y) => target.dropHover(x, y),
+    leave: () => target.clearDropHover(),
+  }
+}
+let unregisterSplitPanes: Array<() => void> = []
+watch([splitOpen, canvas, secondaryCanvas], () => {
+  unregisterSplitPanes.forEach((unregister) => unregister())
+  unregisterSplitPanes = []
+  if (!splitOpen.value) return
+  if (canvas.value) unregisterSplitPanes.push(registerSplitPane(paneHandle(canvas.value, primaryMap)))
+  if (secondaryCanvas.value) unregisterSplitPanes.push(registerSplitPane(paneHandle(secondaryCanvas.value, secondaryMap)))
+}, { flush: 'post', immediate: true })
+// Both engines listen on window; only the pane with focus may run shortcuts.
+watch([splitOpen, focusedPane, () => primaryMap.ready.value, () => secondaryMap.ready.value], () => {
+  const split = splitOpen.value
+  primaryMap.setShortcutsEnabled(!split || focusedPane.value === 'primary')
+  secondaryMap.setShortcutsEnabled(split && focusedPane.value === 'secondary')
+}, { flush: 'post', immediate: true })
 const newDialog = ref<HTMLDialogElement | null>(null)
 function createNewDocument() {
   store.add()
@@ -195,6 +326,7 @@ async function save(): Promise<boolean> {
 }
 function focusSearch() {
   leftOpen.value = true
+  focusedPane.value = 'primary'
   if (window.innerWidth <= 900) rightOpen.value = false
   void nextTick(() => searchInput.value?.focus())
 }
@@ -205,7 +337,7 @@ const commandShortcuts = useCommandShortcuts(map.engine, {
 function searchNext() {
   if (!searchResults.value.length) return
   const target = searchResults.value[searchIndex.value % searchResults.value.length]
-  if (target) map.select(target.node.data.uid)
+  if (target) primaryMap.select(target.node.data.uid)
   searchIndex.value++
 }
 async function importFile(event: Event) {
@@ -283,9 +415,10 @@ async function exportFile(type: 'json' | 'md' | 'png' | 'svg') {
   busy.value = true
   try {
     map.capture()
+    const doc = active.value
     let exported: boolean
-    if (type === 'json') exported = await downloadText(serializeDocument(active.value), `${active.value.title}.json`)
-    else if (type === 'md') exported = await downloadText(exportMarkdown(active.value.root), `${active.value.title}.md`, 'text/markdown')
+    if (type === 'json') exported = await downloadText(serializeDocument(doc), `${doc.title}.json`)
+    else if (type === 'md') exported = await downloadText(exportMarkdown(doc.root), `${doc.title}.md`, 'text/markdown')
     else exported = await map.exportImage(type)
     if (exported) notify('已导出')
   } catch (error) { notify(error instanceof Error ? error.message : '导出失败', true) }
@@ -324,6 +457,7 @@ function onPageHide() { map.capture(); store.flush() }
 window.addEventListener('pagehide', onPageHide)
 onBeforeUnmount(() => {
   clearTimeout(messageTimer)
+  unregisterSplitPanes.forEach((unregister) => unregister())
   window.removeEventListener('keydown', onKeydown)
   window.removeEventListener('pagehide', onPageHide)
 })
@@ -398,6 +532,7 @@ onBeforeUnmount(() => {
         <label class="layout-select"><Network :size="16" /><select aria-label="导图布局" :value="active.layout" @change="setLayout"><option v-for="layout in layouts" :key="layout.value" :value="layout.value">{{ layout.label }}</option></select></label>
       </div>
       <span class="toolbar-separator"></span>
+      <IconButton :icon="Columns2" label="分屏" :title="splitOpen ? '关闭分屏' : '分屏编辑当前文档，可在两屏间拖动节点'" :active="splitOpen" :disabled="isVsCode" @click="toggleSplit" />
       <IconButton :icon="rightOpen ? PanelRightClose : PanelRightOpen" label="切换属性面板" :active="rightOpen" @click="toggleRight" />
     </div>
 
@@ -410,31 +545,55 @@ onBeforeUnmount(() => {
           <button v-for="doc in workspace.documents" :key="doc.id" class="document-item" :class="{ selected: doc.id === active.id }" :title="doc.filePath ?? doc.title" @click="selectDocument(doc.id)"><FileText :size="16" /><span>{{ doc.title }}</span><span v-if="doc.id === active.id" class="document-active-dot"></span></button>
         </div>
         <div class="document-tools"><span>{{ isVsCode ? 'VS Code' : `${workspace.documents.length} 个本地文档` }}</span><IconButton :icon="Copy" label="复制当前导图" @click="duplicateDocument" /><IconButton v-if="!isVsCode" :icon="Trash2" label="删除当前导图" @click="confirmDialog?.showModal()" /></div>
-        <div class="outline-heading"><span><ListTree :size="16" />大纲</span><div><IconButton :icon="Plus" label="展开全部" @click="map.command('EXPAND_ALL')" /><IconButton :icon="Minus" label="收起全部" @click="map.command('UNEXPAND_ALL')" /></div></div>
+        <div class="outline-heading"><span><ListTree :size="16" />大纲</span><div><IconButton :icon="Plus" label="展开全部" @click="primaryMap.command('EXPAND_ALL')" /><IconButton :icon="Minus" label="收起全部" @click="primaryMap.command('UNEXPAND_ALL')" /></div></div>
         <form class="search-box" @submit.prevent="searchNext"><Search :size="15" /><input ref="searchInput" v-model="query" aria-label="搜索节点" placeholder="搜索节点" @input="searchIndex = 0" /><button v-if="query" type="button" aria-label="清除搜索" @click="query = ''"><X :size="14" /></button></form>
         <div v-if="query" class="search-summary"><span>{{ searchResults.length }} 个匹配结果</span><button :disabled="!searchResults.length" @click="searchNext">下一个<ChevronRight :size="13" /></button></div>
-        <OutlineTree :root="active.root" :selected-uid="selectedUid" :query="query" @select="map.select" @toggle="map.toggle" @rename="map.editText" @remove="map.remove" />
+        <OutlineTree :root="active.root" :selected-uid="primarySelectedUid" :query="query" @select="selectInPrimary" @toggle="primaryMap.toggle" @rename="primaryMap.editText" @remove="primaryMap.remove" />
         <div class="local-note"><span class="status-dot"></span>{{ isVsCode ? '文件工作空间' : '本地工作空间' }}<span>{{ isVsCode ? 'VSCODE' : 'LOCAL' }}</span></div>
       </aside>
 
-      <section class="canvas-area" aria-label="思维导图编辑区">
-        <div class="canvas-caption"><span class="canvas-caption-dot"></span>{{ layouts.find((layout) => layout.value === active.layout)?.label }}<span class="caption-divider">/</span><span>{{ nodeCount }} 个节点</span></div>
-        <div ref="canvas" class="map-canvas" data-testid="mind-map-canvas"></div>
-        <div v-if="!ready" class="canvas-loading"><LoaderCircle :size="22" class="spin" />正在打开导图</div>
-        <div class="canvas-controls">
-          <IconButton :icon="Minus" label="缩小" :disabled="zoom <= 20" @click="map.zoomBy(-1)" />
-          <button class="zoom-value" title="重置缩放" aria-label="重置缩放" @click="map.resetZoom">{{ zoom }}%</button>
-          <IconButton :icon="Plus" label="放大" :disabled="zoom >= 300" @click="map.zoomBy(1)" />
-          <span class="toolbar-separator"></span>
-          <IconButton :icon="Maximize" label="适应画布" @click="map.fit" />
-        </div>
+      <div class="pane-stack" :class="{ split: splitOpen }">
+        <section class="canvas-area pane primary-pane" :class="{ focused: splitOpen && focusedPane === 'primary' }" :style="primaryPaneStyle" aria-label="思维导图编辑区" @pointerdown.capture="focusPane('primary')">
+          <div class="canvas-caption"><span class="canvas-caption-dot"></span>{{ layouts.find((layout) => layout.value === active.layout)?.label }}<span class="caption-divider">/</span><span>{{ nodeCount }} 个节点</span></div>
+          <div ref="canvas" class="map-canvas" data-testid="mind-map-canvas"></div>
+          <div v-if="!primaryReady" class="canvas-loading"><LoaderCircle :size="22" class="spin" />正在打开导图</div>
+          <div class="canvas-controls">
+            <IconButton :icon="Minus" label="缩小" :disabled="primaryZoom <= 20" @click="primaryMap.zoomBy(-1)" />
+            <button class="zoom-value" title="重置缩放" aria-label="重置缩放" @click="primaryMap.resetZoom">{{ primaryZoom }}%</button>
+            <IconButton :icon="Plus" label="放大" :disabled="primaryZoom >= 300" @click="primaryMap.zoomBy(1)" />
+            <span class="toolbar-separator"></span>
+            <IconButton :icon="Maximize" label="适应画布" @click="primaryMap.fit" />
+          </div>
+        </section>
+
+        <button v-if="splitOpen" class="split-divider" type="button" aria-label="调整分屏比例" title="拖动调整分屏比例" @pointerdown="startSplitResize"></button>
+
+        <section v-if="splitOpen" class="canvas-area pane secondary-pane" :class="{ focused: focusedPane === 'secondary' }" :style="{ flex: '1 1 0' }" aria-label="第二个思维导图编辑区" @pointerdown.capture="focusPane('secondary')">
+          <div class="canvas-caption secondary-caption">
+            <span class="canvas-caption-dot"></span>
+            <span class="secondary-title">{{ active.title }}</span>
+            <span class="caption-divider">/</span>
+            <span class="secondary-count">同一文档 · {{ nodeCount }} 个节点</span>
+            <button class="pane-close" type="button" aria-label="关闭分屏" title="关闭分屏" @click="closeSplit"><X :size="13" /></button>
+          </div>
+          <div ref="secondaryCanvas" class="map-canvas" data-testid="mind-map-canvas-secondary"></div>
+          <div v-if="!secondaryReady" class="canvas-loading"><LoaderCircle :size="22" class="spin" />正在打开导图</div>
+          <div class="canvas-controls">
+            <IconButton :icon="Minus" label="缩小第二屏" :disabled="secondaryZoom <= 20" @click="secondaryMap.zoomBy(-1)" />
+            <button class="zoom-value" title="重置第二屏缩放" aria-label="重置第二屏缩放" @click="secondaryMap.resetZoom">{{ secondaryZoom }}%</button>
+            <IconButton :icon="Plus" label="放大第二屏" :disabled="secondaryZoom >= 300" @click="secondaryMap.zoomBy(1)" />
+            <span class="toolbar-separator"></span>
+            <IconButton :icon="Maximize" label="适应第二屏" @click="secondaryMap.fit" />
+          </div>
+        </section>
+
         <AiChatPanel v-show="aiPanelOpen" ref="aiChatPanel" :visible="aiPanelOpen" :target="aiTarget" :map="aiMap" :current-target="currentAiTarget" :current-map="currentAiMap" :apply="applyAi" :apply-map="applyAiMap" :shortcut="aiShortcutValue" :shortcut-loading="aiShortcutLoading" :shortcut-error="aiShortcutError" :mac="aiShortcut.mac" :save-shortcut="aiShortcut.save" />
-      </section>
+      </div>
 
       <aside v-if="rightOpen" class="right-panel">
         <div class="panel-heading"><span><Settings2 :size="16" />节点</span></div>
         <div class="inspector-content">
-          <NodeInspector :nodes="selection" @style="style" @properties="map.properties" @image="addImage" @remove-image="removeImage" @preview="openNodeLink" />
+          <NodeInspector :nodes="selection" :theme="activeTheme" @style="style" @style-template="map.applyStyles" @properties="map.properties" @image="addImage" @remove-image="removeImage" @preview="openNodeLink" />
         </div>
         <div class="panel-bottom"><span class="status-dot"></span>{{ selection.length ? `已选择 ${selection.length} 个节点` : '未选择节点' }}</div>
       </aside>

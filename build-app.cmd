@@ -7,10 +7,12 @@ if errorlevel 1 exit /b 1
 set "NO_PAUSE=0"
 set "INSTALL=1"
 set "LAUNCH=0"
+set "SILENT=0"
 for %%A in (%*) do (
   if /i "%%~A"=="--no-pause" set "NO_PAUSE=1"
   if /i "%%~A"=="--no-install" set "INSTALL=0"
   if /i "%%~A"=="--launch" set "LAUNCH=1"
+  if /i "%%~A"=="--silent" set "SILENT=1"
   if /i "%%~A"=="--help" goto :help
 )
 
@@ -30,14 +32,11 @@ if errorlevel 1 (
   goto :failed
 )
 
-echo [1/5] Installing dependencies...
+echo [1/4] Installing dependencies...
 call pnpm install --frozen-lockfile
 if errorlevel 1 goto :failed
 
-echo [2/5] Closing running XMindmap instances...
-powershell -NoProfile -Command "Get-Process xmindmap -ErrorAction SilentlyContinue | Stop-Process -Force" >nul 2>&1
-
-echo [3/5] Building the desktop app and installer...
+echo [2/4] Building the desktop app and installer...
 call pnpm app:build
 if errorlevel 1 goto :failed
 
@@ -49,24 +48,29 @@ if not defined SETUP (
 )
 
 if "%INSTALL%"=="1" (
-  echo [4/5] Installing %SETUP% ...
-  powershell -NoProfile -Command "$p = Start-Process -FilePath '%SETUP%' -ArgumentList '/S' -Wait -PassThru; exit $p.ExitCode"
+  if "%SILENT%"=="1" (
+    echo [3/4] Installing silently. Running instances will be closed without a prompt...
+    powershell -NoProfile -Command "$p = Start-Process -FilePath '%SETUP%' -ArgumentList '/S' -Wait -PassThru; exit $p.ExitCode"
+  ) else (
+    echo [3/4] Starting the installer. If XMindmap is running, the installer will ask first.
+    powershell -NoProfile -Command "$p = Start-Process -FilePath '%SETUP%' -Wait -PassThru; exit $p.ExitCode"
+  )
   if errorlevel 1 (
     echo [ERROR] The installer returned a failure code.
     goto :failed
   )
 ) else (
-  echo [4/5] Skipping installation ^(--no-install^).
+  echo [3/4] Skipping installation ^(--no-install^).
 )
 
 set "APP=%LOCALAPPDATA%\XMindmap\xmindmap.exe"
 if not exist "%APP%" set "APP=%CD%\src-tauri\target\release\xmindmap.exe"
 
 if "%LAUNCH%"=="1" (
-  echo [5/5] Launching XMindmap...
+  echo [4/4] Launching XMindmap...
   start "" "%APP%"
 ) else (
-  echo [5/5] Done.
+  echo [4/4] Done.
 )
 
 echo.
@@ -86,8 +90,12 @@ echo Usage: build-app.cmd [options]
 echo.
 echo   --no-pause     Do not wait for a key press when finished.
 echo   --no-install   Build only; skip running the NSIS installer.
+echo   --silent       Unattended install. Closes running instances without asking.
 echo   --launch       Start XMindmap after installing.
 echo   --help         Show this help.
+echo.
+echo Without --silent the installer UI is shown and prompts before closing a
+echo running XMindmap instance.
 set "BUILD_EXIT_CODE=0"
 goto :finish
 
