@@ -17,10 +17,7 @@ jobs:
         with:
           node-version: 22
           cache: npm
-          cache-dependency-path: |
-            package-lock.json
-            vscode-extension/package-lock.json
-      - run: npm ci
+          cache-dependency-path: vscode-extension/package-lock.json
       - run: npm ci
         working-directory: vscode-extension
       - name: Check tag matches the extension version
